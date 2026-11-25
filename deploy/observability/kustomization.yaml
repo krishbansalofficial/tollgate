@@ -1,0 +1,26 @@
+# The same config files docker compose mounts, packaged as ConfigMaps, so
+# local and cluster observability never drift apart.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+
+resources:
+  - k8s/namespace.yaml
+  - k8s/otel-collector.yaml
+  - k8s/tempo.yaml
+  - k8s/prometheus.yaml
+  - k8s/grafana.yaml
+
+configMapGenerator:
+  - name: otel-collector-config
+    files: [config.yaml=otel-collector.yaml]
+  - name: tempo-config
+    files: [tempo.yaml]
+  - name: prometheus-config
+    files: [prometheus.yml=prometheus/prometheus-k8s.yml, prometheus/alerts.yml]
+  - name: grafana-datasources
+    files: [grafana/provisioning/datasources/datasources.yaml]
+  - name: grafana-dashboard-provider
+    files: [grafana/provisioning/dashboards/dashboards.yaml]
+  - name: grafana-dashboards
+    files: [grafana/dashboards/overview.json, grafana/dashboards/spend.json]

@@ -1,0 +1,82 @@
+# Child applications. Sync waves order them: platform controllers (CRDs)
+# first, then issuers that use those CRDs, then workloads.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sealed-secrets
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-2" }
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    targetRevision: main
+    path: deploy/platform/sealed-secrets
+  destination: { server: https://kubernetes.default.svc, namespace: kube-system }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-2" }
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    targetRevision: main
+    path: deploy/platform/cert-manager
+  destination: { server: https://kubernetes.default.svc, namespace: cert-manager }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ServerSideApply=true] # cert-manager CRDs exceed the client-side apply annotation limit
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: issuers
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-1" }
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    targetRevision: main
+    path: deploy/platform/issuers
+  destination: { server: https://kubernetes.default.svc }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [SkipDryRunOnMissingResource=true] # ClusterIssuer CRD may not exist at dry-run time
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    targetRevision: main
+    path: deploy/observability
+  destination: { server: https://kubernetes.default.svc, namespace: observability }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tollgate
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "1" }
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    targetRevision: main
+    path: deploy/tollgate
+  destination: { server: https://kubernetes.default.svc, namespace: tollgate }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }

@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tollgate
+
+resources:
+  - namespace.yaml
+  - tollgate.yaml
+  - migrate-job.yaml
+  - postgres.yaml
+  - redis.yaml
+  - networkpolicy.yaml
+  # Secrets: generated per cluster by scripts/seal-secrets.sh, which encrypts
+  # them with this cluster's sealed-secrets key and adds the file here.
+  # See secrets.example.yaml for the keys it must contain.
+
+# CI rewrites newTag to the commit SHA after pushing the image; Argo CD sees
+# the commit and rolls it out. Do not edit by hand.
+images:
+  - name: ghcr.io/krishbansalofficial/tollgate
+    newTag: dev
+
+configMapGenerator:
+  - name: tollgate-config
+    literals:
+      - TOLLGATE_REDIS_URL=redis://redis:6379/0
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector.observability.svc.cluster.local:4317
+      - TOLLGATE_RATELIMIT_FAIL_MODE=open
+      # Ollama on the laptop, reached over Tailscale (see docs/DEPLOY.md).
+      # Leave empty to run without a local fallback.
+      - TOLLGATE_OLLAMA_BASE_URL=
+      - TOLLGATE_FALLBACK_MODEL=

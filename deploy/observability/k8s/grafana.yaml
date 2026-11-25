@@ -1,0 +1,74 @@
+# Grafana is exposed through the ingress with TLS and its own login. The
+# admin password comes from a SealedSecret (scripts/seal-secrets.sh).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: grafana }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: grafana }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.3.1
+          ports: [{ name: http, containerPort: 3000 }]
+          env:
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "false" }
+            - { name: GF_USERS_ALLOW_SIGN_UP, value: "false" }
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: grafana-admin, key: password } }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+          volumeMounts:
+            - { name: storage, mountPath: /var/lib/grafana }
+            - { name: dashboards, mountPath: /var/lib/grafana/dashboards }
+            - { name: datasources, mountPath: /etc/grafana/provisioning/datasources }
+            - { name: dashboard-provider, mountPath: /etc/grafana/provisioning/dashboards }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+      volumes:
+        - { name: storage, emptyDir: {} } # dashboards and datasources are provisioned from git; nothing to persist
+        - { name: dashboards, configMap: { name: grafana-dashboards } }
+        - { name: datasources, configMap: { name: grafana-datasources } }
+        - { name: dashboard-provider, configMap: { name: grafana-dashboard-provider } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  selector: { app.kubernetes.io/name: grafana }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [grafana.change-me.duckdns.org]
+      secretName: grafana-tls
+  rules:
+    - host: grafana.change-me.duckdns.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: grafana, port: { name: http } } }

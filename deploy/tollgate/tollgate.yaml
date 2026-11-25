@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tollgate
+  labels: { app.kubernetes.io/name: tollgate, app.kubernetes.io/component: api }
+spec:
+  replicas: 2 # rate limits stay globally consistent: all state is in Redis
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } # never below 2 ready pods during a rollout
+  selector:
+    matchLabels: { app.kubernetes.io/name: tollgate, app.kubernetes.io/component: api }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: tollgate, app.kubernetes.io/component: api }
+    spec:
+      # Must exceed TOLLGATE_SHUTDOWN_DELAY (5s) + TOLLGATE_SHUTDOWN_TIMEOUT
+      # (20s) so the app finishes draining and flushing before SIGKILL.
+      terminationGracePeriodSeconds: 35
+      imagePullSecrets: [{ name: ghcr-pull }]
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: tollgate
+          image: ghcr.io/krishbansalofficial/tollgate
+          args: [serve]
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: metrics, containerPort: 9090 }
+          envFrom:
+            - configMapRef: { name: tollgate-config }
+          env:
+            - name: TOLLGATE_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: tollgate-secrets, key: database-url } }
+            - name: GROQ_API_KEY
+              valueFrom: { secretKeyRef: { name: tollgate-secrets, key: groq-api-key, optional: true } }
+            - name: ANTHROPIC_API_KEY
+              valueFrom: { secretKeyRef: { name: tollgate-secrets, key: anthropic-api-key, optional: true } }
+            - name: GEMINI_API_KEY
+              valueFrom: { secretKeyRef: { name: tollgate-secrets, key: gemini-api-key, optional: true } }
+            # Go's GC targets this soft limit, so the heap stays under the
+            # container limit instead of being OOM-killed during a burst.
+            - name: GOMEMLIMIT
+              valueFrom: { resourceFieldRef: { resource: limits.memory } }
+          resources:
+            # No CPU limit on purpose: CFS throttling adds latency spikes
+            # exactly under load, which is what the p99 target measures.
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tollgate
+spec:
+  selector: { app.kubernetes.io/name: tollgate, app.kubernetes.io/component: api }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: tollgate
+spec:
+  minAvailable: 1 # node drains and upgrades keep one pod serving
+  selector:
+    matchLabels: { app.kubernetes.io/name: tollgate, app.kubernetes.io/component: api }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tollgate
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [change-me.duckdns.org] # your DuckDNS name (docs/DEPLOY.md step 4)
+      secretName: tollgate-tls
+  rules:
+    - host: change-me.duckdns.org
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend: { service: { name: tollgate, port: { name: http } } }

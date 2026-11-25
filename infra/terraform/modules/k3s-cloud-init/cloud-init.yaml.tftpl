@@ -1,0 +1,26 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - curl
+  - iptables-persistent
+  - unattended-upgrades
+
+write_files:
+  # k3s reads this on first start.
+  - path: /etc/rancher/k3s/config.yaml
+    permissions: "0600"
+    content: |
+      write-kubeconfig-mode: "0600"
+      # Encrypt Secrets at rest in the datastore.
+      secrets-encryption: true
+      # The API server is reached over an SSH tunnel; it is never opened in
+      # the cloud firewall, so no public TLS SAN is needed.
+      node-name: tollgate
+
+runcmd:
+%{ if open_host_firewall ~}
+  - iptables -I INPUT -p tcp -m multiport --dports 80,443 -m conntrack --ctstate NEW -j ACCEPT
+  - netfilter-persistent save
+%{ endif ~}
+  - curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION='${k3s_version}' sh -
