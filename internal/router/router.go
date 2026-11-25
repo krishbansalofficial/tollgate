@@ -76,15 +76,20 @@ func New(cfg Config, cat *Catalog, provs map[string]providers.Provider, onBreake
 	return r
 }
 
-// Known reports whether model can be routed at all (checked before any
-// rate-limit tokens are spent on the request).
+// Known reports whether model can be routed (checked before any rate-limit
+// tokens are spent). Pinned models must be in the catalog: an unpriced model
+// would be served at a recorded cost of $0, silently bypassing spend
+// tracking and budgets, so unknown models fail closed.
 func (r *Router) Known(model string) bool {
 	if _, ok := r.catalog.Aliases[model]; ok {
 		return true
 	}
-	p, _, ok := split(model)
+	if _, priced := r.catalog.Models[model]; !priced {
+		return false
+	}
+	p, _, _ := split(model)
 	_, configured := r.providers[p]
-	return ok && configured
+	return configured
 }
 
 // Cost prices a completion for the ledger.
@@ -202,7 +207,10 @@ func (r *Router) Chat(ctx context.Context, req *api.ChatRequest) (*Result, error
 				return nil, err // not an upstream failure (e.g. encoding bug): don't mask it
 			}
 			if pe.ClientFault() {
-				br.Record(true) // the provider is healthy; the request is bad
+				// Neutral for the breaker: neither health nor failure. Counting it
+				// as success would let a client keep a failing provider's breaker
+				// closed (or close a half-open one) by sending bad requests.
+				br.Release()
 				return nil, err
 			}
 			br.Record(false)

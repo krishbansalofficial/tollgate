@@ -22,10 +22,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/krishbansalofficial/tollgate/internal/auth"
+	"github.com/krishbansalofficial/tollgate/internal/cache"
 	"github.com/krishbansalofficial/tollgate/internal/config"
 	"github.com/krishbansalofficial/tollgate/internal/providers"
+	"github.com/krishbansalofficial/tollgate/internal/ratelimit"
+	"github.com/krishbansalofficial/tollgate/internal/router"
 	"github.com/krishbansalofficial/tollgate/internal/server"
 	"github.com/krishbansalofficial/tollgate/migrations"
 )
@@ -71,29 +75,57 @@ func run(args []string) error {
 }
 
 func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) error {
-	provs := map[string]providers.Provider{}
-	if cfg.GroqAPIKey != "" {
-		provs["groq"] = providers.NewOpenAICompat("groq", cfg.GroqBaseURL, cfg.GroqAPIKey, providers.NewHTTPClient())
+	catalog, err := router.LoadCatalog(cfg.CatalogPath)
+	if err != nil {
+		return err
 	}
-	if cfg.MockBaseURL != "" {
-		provs["mock"] = providers.NewOpenAICompat("mock", cfg.MockBaseURL, "", providers.NewHTTPClient())
-	}
+	provs := buildProviders(cfg)
 	if len(provs) == 0 {
-		return errors.New("no providers configured: set GROQ_API_KEY and/or TOLLGATE_MOCK_BASE_URL")
+		return errors.New("no providers configured: set at least one provider API key or TOLLGATE_MOCK_BASE_URL")
+	}
+	if f := cfg.FallbackModel; f != "" {
+		if _, priced := catalog.Models[f]; !priced {
+			return fmt.Errorf("TOLLGATE_FALLBACK_MODEL %q is not in the catalog", f)
+		}
+	}
+	rcfg := router.DefaultConfig()
+	rcfg.MaxAttempts, rcfg.AttemptTimeout, rcfg.Fallback = cfg.MaxAttempts, cfg.AttemptTimeout, cfg.FallbackModel
+	rt := router.New(rcfg, catalog, provs, func(p string, s router.State) {
+		log.Warn("circuit breaker state change", "provider", p, "state", s.String())
+	})
+
+	var limiter *ratelimit.Limiter
+	var respCache *cache.Cache
+	if cfg.RedisURL != "" {
+		opts, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			return fmt.Errorf("TOLLGATE_REDIS_URL: %w", err)
+		}
+		rdb := redis.NewClient(opts)
+		defer func() { _ = rdb.Close() }()
+		limiter = ratelimit.New(rdb, cfg.RateLimitFailOpen)
+		respCache = cache.New(rdb, cfg.CacheTTL)
+	} else {
+		log.Warn("TOLLGATE_REDIS_URL not set: rate limiting and caching are DISABLED")
 	}
 
 	var draining atomic.Bool
 	handler := server.New(server.Deps{
-		Auth:      auth.NewAuthenticator(auth.NewPGStore(pool), cfg.KeyCacheTTL),
-		Providers: provs,
+		Auth:    auth.NewAuthenticator(auth.NewPGStore(pool), cfg.KeyCacheTTL),
+		Limiter: limiter,
+		Cache:   respCache,
+		Router:  rt,
 		Ready: func(ctx context.Context) error {
 			if draining.Load() {
 				return errors.New("shutting down")
 			}
+			// Redis is deliberately not checked: with fail-open, a Redis outage
+			// should degrade the gateway, not remove every pod from service.
 			return pool.Ping(ctx)
 		},
-		Logger:          log,
-		UpstreamTimeout: cfg.UpstreamTimeout,
+		Logger:           log,
+		UpstreamTimeout:  cfg.UpstreamTimeout,
+		DefaultMaxTokens: cfg.DefaultMaxTokens,
 	})
 
 	srv := &http.Server{
@@ -106,7 +138,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpo
 	}
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", cfg.Addr, "providers", len(provs))
+		log.Info("listening", "addr", cfg.Addr, "providers", len(provs), "fallback", cfg.FallbackModel)
 		errc <- srv.ListenAndServe()
 	}()
 
@@ -133,6 +165,25 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpo
 	}
 	log.Info("shutdown: complete")
 	return nil
+}
+
+// buildProviders enables each provider whose credentials or URL are set. All
+// share one tuned transport per provider (see providers.NewHTTPClient).
+func buildProviders(cfg config.Config) map[string]providers.Provider {
+	provs := map[string]providers.Provider{}
+	if cfg.GroqAPIKey != "" {
+		provs["groq"] = providers.NewOpenAICompat("groq", cfg.GroqBaseURL, cfg.GroqAPIKey, providers.NewHTTPClient())
+	}
+	if cfg.AnthropicAPIKey != "" {
+		provs["anthropic"] = providers.NewAnthropic(cfg.AnthropicBaseURL, cfg.AnthropicAPIKey, cfg.DefaultMaxTokens, providers.NewHTTPClient())
+	}
+	if cfg.OllamaBaseURL != "" {
+		provs["ollama"] = providers.NewOpenAICompat("ollama", cfg.OllamaBaseURL, "", providers.NewHTTPClient())
+	}
+	if cfg.MockBaseURL != "" {
+		provs["mock"] = providers.NewOpenAICompat("mock", cfg.MockBaseURL, "", providers.NewHTTPClient())
+	}
+	return provs
 }
 
 func migrate(ctx context.Context, pool *pgxpool.Pool) error {

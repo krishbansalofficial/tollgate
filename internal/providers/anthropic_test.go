@@ -102,4 +102,3 @@ func req2(t *testing.T, s string) *api.ChatRequest {
 	}
 	return &r
 }
-

@@ -81,7 +81,7 @@ func TestPlan(t *testing.T) {
 		want  []string
 	}{
 		{"tollgate/cheapest", []string{"b/small", "c/mid", "a/big"}},
-		{"a/anything", []string{"a/anything", "c/mid"}}, // pinned, non-catalog model allowed, fallback appended
+		{"a/big", []string{"a/big", "c/mid"}}, // pinned, fallback appended
 		{"c/mid", []string{"c/mid"}},                    // fallback not duplicated
 	}
 	for _, tt := range tests {
@@ -92,6 +92,9 @@ func TestPlan(t *testing.T) {
 	}
 	if _, err := r.Plan(req("z/unknown-provider")); !errors.Is(err, ErrUnknownModel) {
 		t.Errorf("unknown provider: %v", err)
+	}
+	if _, err := r.Plan(req("a/unpriced")); !errors.Is(err, ErrUnknownModel) {
+		t.Errorf("unpriced model must fail closed: %v", err)
 	}
 
 	// fastest: unobserved first, then by observed latency
@@ -223,4 +226,21 @@ func equal(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// A client-fault response during a half-open probe must not close the
+// breaker: otherwise bad requests could mask a failing provider.
+func TestClientFaultDoesNotCloseBreaker(t *testing.T) {
+	a := &scripted{name: "a", errs: []error{perr(500), perr(500), perr(500), perr(500), perr(500), perr(400)}}
+	r := newRouter(Config{MaxAttempts: 1, AttemptTimeout: time.Second}, a)
+	for range 5 {
+		_, _ = r.Chat(context.Background(), req("a/big"))
+	}
+	br := r.breakers["a"]
+	now := time.Now().Add(time.Minute)
+	br.now = func() time.Time { return now }
+	_, _ = r.Chat(context.Background(), req("a/big")) // half-open probe answered with a 400
+	if s := r.BreakerState("a"); s != HalfOpen {
+		t.Fatalf("breaker = %v, want half_open", s)
+	}
 }

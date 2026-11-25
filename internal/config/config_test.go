@@ -22,7 +22,7 @@ func TestLoad(t *testing.T) {
 			name: "defaults",
 			env:  map[string]string{"TOLLGATE_DATABASE_URL": "postgres://x"},
 			check: func(t *testing.T, c Config) {
-				if c.Addr != ":8080" || c.KeyCacheTTL != 30*time.Second || c.LogLevel != slog.LevelInfo {
+				if c.Addr != ":8080" || c.KeyCacheTTL != 30*time.Second || c.LogLevel != slog.LevelInfo || !c.RateLimitFailOpen || c.MaxAttempts != 2 {
 					t.Errorf("unexpected defaults: %+v", c)
 				}
 			},
@@ -48,6 +48,21 @@ func TestLoad(t *testing.T) {
 			name:    "negative duration",
 			env:     map[string]string{"TOLLGATE_DATABASE_URL": "x", "TOLLGATE_KEY_CACHE_TTL": "-1s"},
 			wantErr: "TOLLGATE_KEY_CACHE_TTL",
+		},
+		{
+			name:    "bad fail mode",
+			env:     map[string]string{"TOLLGATE_DATABASE_URL": "x", "TOLLGATE_RATELIMIT_FAIL_MODE": "maybe"},
+			wantErr: "FAIL_MODE",
+		},
+		{
+			name:    "bad int",
+			env:     map[string]string{"TOLLGATE_DATABASE_URL": "x", "TOLLGATE_MAX_ATTEMPTS": "0"},
+			wantErr: "TOLLGATE_MAX_ATTEMPTS",
+		},
+		{
+			name:    "bad sample ratio",
+			env:     map[string]string{"TOLLGATE_DATABASE_URL": "x", "TOLLGATE_TRACE_SAMPLE_RATIO": "2"},
+			wantErr: "SAMPLE_RATIO",
 		},
 		{
 			name:    "bad log level",

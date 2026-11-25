@@ -1,0 +1,32 @@
+# Model catalog: what Tollgate may route to, and what it costs.
+# Prices are USD per 1M tokens. Only models listed here can be requested:
+# an unpriced model would bypass spend tracking, so unknown models are 404s.
+#
+# Price sources (checked 2026-11-24; re-verify before relying on cost figures):
+#   anthropic: Claude API pricing (claude-haiku-5-5 $0.10/$0.50, claude-sonnet-5-5 $2/$10)
+#   groq / gemini: provider pricing pages; listed values are best-known and may drift
+#   ollama / mock: local, $0
+models:
+  anthropic/claude-haiku-5-5:     { input_per_mtok: 0.10, output_per_mtok: 0.50 }
+  anthropic/claude-sonnet-5-5:    { input_per_mtok: 2.00, output_per_mtok: 10.00 }
+  groq/llama-3.1-8b-instant:      { input_per_mtok: 0.05, output_per_mtok: 0.08 }
+  groq/llama-3.3-70b-versatile:   { input_per_mtok: 0.59, output_per_mtok: 0.79 }
+  gemini/gemini-2.5-flash:        { input_per_mtok: 0.30, output_per_mtok: 2.50 }
+  gemini/gemini-2.5-flash-lite:   { input_per_mtok: 0.10, output_per_mtok: 0.40 }
+  ollama/llama3.2:3b:             { input_per_mtok: 0, output_per_mtok: 0 }
+  mock/small:                     { input_per_mtok: 0.50, output_per_mtok: 1.50 }
+  mock/large:                     { input_per_mtok: 3.00, output_per_mtok: 15.00 }
+
+aliases:
+  # Small, fast models of roughly equal quality: pick the cheapest that's up.
+  tollgate/cheapest:
+    policy: cheapest
+    models: [groq/llama-3.1-8b-instant, gemini/gemini-2.5-flash-lite, anthropic/claude-haiku-5-5]
+  # Same pool, ordered by observed latency (EWMA).
+  tollgate/fastest:
+    policy: fastest
+    models: [groq/llama-3.1-8b-instant, gemini/gemini-2.5-flash-lite, anthropic/claude-haiku-5-5]
+  # Load-test alias: exercises the policy path without real providers.
+  tollgate/mock:
+    policy: cheapest
+    models: [mock/large, mock/small]

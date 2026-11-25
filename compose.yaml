@@ -13,6 +13,14 @@ services:
       interval: 2s
       retries: 15
 
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 15
+
   mockupstream:
     build: .
     entrypoint: ["/usr/local/bin/mockupstream"]
@@ -23,8 +31,13 @@ services:
     command: ["migrate"]
     environment: &env
       TOLLGATE_DATABASE_URL: postgres://tollgate:tollgate@postgres:5432/tollgate?sslmode=disable
+      TOLLGATE_REDIS_URL: redis://redis:6379/0
       TOLLGATE_MOCK_BASE_URL: http://mockupstream:8081/v1
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      TOLLGATE_OLLAMA_BASE_URL: ${TOLLGATE_OLLAMA_BASE_URL:-}
+      TOLLGATE_FALLBACK_MODEL: ${TOLLGATE_FALLBACK_MODEL:-}
       TOLLGATE_SHUTDOWN_DELAY: 0s
     depends_on:
       postgres: { condition: service_healthy }
@@ -36,4 +49,5 @@ services:
     ports: ["8080:8080"]
     depends_on:
       migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
       mockupstream: { condition: service_started }
