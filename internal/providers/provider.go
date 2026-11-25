@@ -28,7 +28,11 @@ type ProviderError struct {
 	Status     int           // upstream HTTP status; 0 for transport errors
 	Retryable  bool          // 408, 429, 5xx, timeouts, connection failures
 	RetryAfter time.Duration // from the upstream Retry-After header, if any
-	Message    string
+	Message    string        // for logs; may be a raw upstream body
+	// FromEnvelope is true when Message came from a parsed {"error":{"message"}}
+	// envelope. Only then is it safe to relay to clients: a raw body could be
+	// an HTML error page or a proxy message containing internal details.
+	FromEnvelope bool
 }
 
 func (e *ProviderError) Error() string {

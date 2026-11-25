@@ -137,7 +137,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpo
 
 func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
 	if err != nil {
 		return err
@@ -151,7 +151,7 @@ func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 
 func keys(ctx context.Context, st *auth.PGStore, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: keys create|revoke ...")
+		return errors.New("usage: keys create|revoke [flags]")
 	}
 	fs := flag.NewFlagSet("keys "+args[0], flag.ContinueOnError)
 	switch args[0] {

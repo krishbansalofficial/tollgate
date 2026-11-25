@@ -57,7 +57,7 @@ func (p *OpenAICompat) Chat(ctx context.Context, req *api.ChatRequest) (*api.Cha
 		}
 		return nil, &ProviderError{Provider: p.name, Retryable: true, Message: err.Error()}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, p.errorFrom(resp)
@@ -75,18 +75,18 @@ func (p *OpenAICompat) Chat(ctx context.Context, req *api.ChatRequest) (*api.Cha
 
 func (p *OpenAICompat) errorFrom(resp *http.Response) error {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
-	msg := strings.TrimSpace(string(raw))
-	var env api.ErrorResponse
-	if json.Unmarshal(raw, &env) == nil && env.Error.Message != "" {
-		msg = env.Error.Message
-	}
-	return &ProviderError{
+	pe := &ProviderError{
 		Provider:   p.name,
 		Status:     resp.StatusCode,
 		Retryable:  retryableStatus(resp.StatusCode),
 		RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
-		Message:    msg,
+		Message:    strings.TrimSpace(string(raw)),
 	}
+	var env api.ErrorResponse
+	if json.Unmarshal(raw, &env) == nil && env.Error.Message != "" {
+		pe.Message, pe.FromEnvelope = env.Error.Message, true
+	}
+	return pe
 }
 
 // AsProviderError is a small helper for callers using errors.As.

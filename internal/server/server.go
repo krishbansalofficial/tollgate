@@ -44,7 +44,10 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	if err := s.Ready(ctx); err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		// Log the cause; never echo it. /readyz is unauthenticated, and a
+		// dependency error can contain hostnames or connection details.
+		s.Logger.Warn("not ready", "err", err)
+		http.Error(w, "not ready", http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -103,12 +106,27 @@ func (s *Server) upstreamError(w http.ResponseWriter, r *http.Request, provider 
 			w.Header().Set("Retry-After", strconv.Itoa(int(pe.RetryAfter.Seconds()+0.5)))
 		}
 		writeError(w, r, http.StatusServiceUnavailable, "api_error", "upstream capacity exhausted; retry later")
-	case ok && pe.Status >= 400 && pe.Status < 500 && pe.Status != http.StatusUnauthorized && pe.Status != http.StatusForbidden:
-		writeError(w, r, pe.Status, "invalid_request_error", provider+": "+pe.Message)
+	case ok && relayStatus[pe.Status]:
+		msg := "upstream rejected the request"
+		if pe.FromEnvelope {
+			msg = provider + ": " + pe.Message
+		}
+		log.Info("upstream rejected request", "status", pe.Status, "upstream_message", pe.Message)
+		writeError(w, r, pe.Status, "invalid_request_error", msg)
 	default:
 		log.Error("upstream error", "err", err)
 		writeError(w, r, http.StatusBadGateway, "api_error", "upstream provider error")
 	}
+}
+
+// relayStatus is an allowlist of upstream statuses that describe a problem
+// with the client's own request. Everything else (401/403 = our upstream
+// credentials, 402 = our billing, unknown codes) becomes a generic 502.
+var relayStatus = map[int]bool{
+	http.StatusBadRequest:            true,
+	http.StatusNotFound:              true,
+	http.StatusRequestEntityTooLarge: true,
+	http.StatusUnprocessableEntity:   true,
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

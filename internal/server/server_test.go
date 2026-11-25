@@ -57,7 +57,7 @@ func post(t *testing.T, url, key, body string) *http.Response {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { resp.Body.Close() })
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	return resp
 }
 

@@ -47,11 +47,12 @@ func TestOpenAICompatErrors(t *testing.T) {
 		wantRetryable bool
 		wantAfter     time.Duration
 		wantMsg       string
+		wantEnvelope  bool
 	}{
-		{"server error", 500, "", `{"error":{"message":"boom"}}`, true, 0, "boom"},
-		{"rate limited", 429, "7", `{"error":{"message":"slow down"}}`, true, 7 * time.Second, "slow down"},
-		{"bad request", 400, "", `{"error":{"message":"bad model"}}`, false, 0, "bad model"},
-		{"non-json body", 502, "", "<html>bad gateway</html>", true, 0, "<html>bad gateway</html>"},
+		{"server error", 500, "", `{"error":{"message":"boom"}}`, true, 0, "boom", true},
+		{"rate limited", 429, "7", `{"error":{"message":"slow down"}}`, true, 7 * time.Second, "slow down", true},
+		{"bad request", 400, "", `{"error":{"message":"bad model"}}`, false, 0, "bad model", true},
+		{"non-json body", 502, "", "<html>bad gateway</html>", true, 0, "<html>bad gateway</html>", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -69,7 +70,7 @@ func TestOpenAICompatErrors(t *testing.T) {
 			if !ok {
 				t.Fatalf("want ProviderError, got %v", err)
 			}
-			if pe.Status != tt.status || pe.Retryable != tt.wantRetryable || pe.RetryAfter != tt.wantAfter || pe.Message != tt.wantMsg {
+			if pe.Status != tt.status || pe.Retryable != tt.wantRetryable || pe.RetryAfter != tt.wantAfter || pe.Message != tt.wantMsg || pe.FromEnvelope != tt.wantEnvelope {
 				t.Errorf("got %+v", pe)
 			}
 		})
