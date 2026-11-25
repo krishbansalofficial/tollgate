@@ -1,5 +1,5 @@
 # Local dev: `docker compose up --build`, then create a key:
-#   docker compose run --rm tollgate keys create --project dev
+#   docker compose run --rm --no-deps tollgate keys create --project dev
 services:
   postgres:
     image: postgres:17-alpine
