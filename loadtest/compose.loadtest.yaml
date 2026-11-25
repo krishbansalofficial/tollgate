@@ -5,6 +5,9 @@ services:
   mockupstream:
     command: ["-addr", ":8081", "-latency", "50ms", "-stream-chunks", "20", "-chunk-delay", "5ms"]
   tollgate:
+    # Production-like CPU budget: the Oracle node has 2 OCPUs. Go (1.25+)
+    # reads the cgroup limit and sets GOMAXPROCS=2 to match.
+    cpus: ${GATEWAY_CPUS:-2}
     environment:
       TOLLGATE_PPROF_ADDR: ":6060"
     ports: ["127.0.0.1:6060:6060"]

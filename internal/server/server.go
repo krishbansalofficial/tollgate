@@ -60,12 +60,18 @@ type Deps struct {
 	Logger           *slog.Logger
 	UpstreamTimeout  time.Duration
 	DefaultMaxTokens int
+	// RunAfter runs post-response bookkeeping; nil means a new goroutine.
+	// Tests pass a synchronous runner to make the effects deterministic.
+	RunAfter func(func())
 }
 
 type Server struct{ Deps }
 
 // New returns the root handler.
 func New(d Deps) http.Handler {
+	if d.RunAfter == nil {
+		d.RunAfter = func(f func()) { go f() }
+	}
 	if d.Observer == nil {
 		d.Observer = ObserverFunc(func(Outcome) {})
 	}
@@ -180,16 +186,25 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Tollgate-Provider", res.Provider)
 	writeJSON(w, http.StatusOK, resp)
 	q.out.Status = http.StatusOK
-	// Flush now so the client has its answer before the bookkeeping below;
-	// otherwise net/http would hold the response until the handler returns.
-	_ = http.NewResponseController(w).Flush()
 
-	s.reconcile(bg, q, used)
-	if cacheKey != "" {
-		if err := s.Cache.Set(bg, cacheKey, resp); err != nil {
-			s.Logger.WarnContext(bg, "cache set failed", "request_id", q.out.RequestID, "err", err)
+	// Bookkeeping (TPM reconcile, cache fill) runs after the handler returns,
+	// so net/http sends the whole response in one write and the client never
+	// waits on these Redis round trips. This replaced an explicit Flush,
+	// which cost a second write syscall per response (~7% of CPU at the
+	// 2-CPU knee; loadtest/RESULTS.md). Inputs are copied first, so the
+	// goroutine shares no mutable state with the finished request.
+	// ponytail: fire-and-forget; both calls are bounded by the 50 ms Redis
+	// timeout, and losing one at shutdown only means a slightly stale bucket
+	// or a missed cache fill. Track with a WaitGroup if that ever matters.
+	key, reserved, rid := q.key, q.reserved, q.out.RequestID
+	s.RunAfter(func() {
+		s.reconcileKey(bg, key, reserved, used, rid)
+		if cacheKey != "" {
+			if err := s.Cache.Set(bg, cacheKey, resp); err != nil {
+				s.Logger.WarnContext(bg, "cache set failed", "request_id", rid, "err", err)
+			}
 		}
-	}
+	})
 }
 
 // admit applies the rate limit, writing the rejection itself. It reserves
@@ -230,11 +245,15 @@ func (s *Server) admit(q *request) bool {
 // reconcile returns unused reserved tokens (or charges extra) once the real
 // usage is known.
 func (s *Server) reconcile(ctx context.Context, q *request, used int) {
-	if s.Limiter == nil || q.reserved == 0 && used == 0 {
+	s.reconcileKey(ctx, q.key, q.reserved, used, q.out.RequestID)
+}
+
+func (s *Server) reconcileKey(ctx context.Context, key auth.Key, reserved, used int, rid string) {
+	if s.Limiter == nil || reserved == 0 && used == 0 {
 		return
 	}
-	if err := s.Limiter.Reconcile(ctx, q.key.ID, q.key.TPMLimit, q.reserved-used); err != nil {
-		s.Logger.WarnContext(ctx, "rate limit reconcile failed", "request_id", q.out.RequestID, "err", err)
+	if err := s.Limiter.Reconcile(ctx, key.ID, key.TPMLimit, reserved-used); err != nil {
+		s.Logger.WarnContext(ctx, "rate limit reconcile failed", "request_id", rid, "err", err)
 	}
 }
 

@@ -113,6 +113,7 @@ func newGateway(t *testing.T, o gwOpts) *gateway {
 		Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 		UpstreamTimeout:  o.timeout,
 		DefaultMaxTokens: 256,
+		RunAfter:         func(f func()) { f() }, // deterministic cache fills
 	})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
