@@ -82,7 +82,7 @@ func TestPlan(t *testing.T) {
 	}{
 		{"tollgate/cheapest", []string{"b/small", "c/mid", "a/big"}},
 		{"a/big", []string{"a/big", "c/mid"}}, // pinned, fallback appended
-		{"c/mid", []string{"c/mid"}},                    // fallback not duplicated
+		{"c/mid", []string{"c/mid"}},          // fallback not duplicated
 	}
 	for _, tt := range tests {
 		got, err := r.Plan(req(tt.model))
