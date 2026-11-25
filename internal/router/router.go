@@ -12,9 +12,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/krishbansalofficial/tollgate/internal/api"
 	"github.com/krishbansalofficial/tollgate/internal/providers"
 )
+
+var tracer = otel.Tracer("github.com/krishbansalofficial/tollgate/internal/router")
 
 var (
 	ErrUnknownModel = errors.New("router: unknown model")
@@ -140,13 +147,23 @@ func (r *Router) Plan(req *api.ChatRequest) ([]string, error) {
 //     permitting), then fall back to the next;
 //   - other errors (e.g. 401 from a misconfigured upstream key) fall back;
 //   - the request's own context ending stops everything.
-func (r *Router) Chat(ctx context.Context, req *api.ChatRequest) (*Result, error) {
+func (r *Router) Chat(ctx context.Context, req *api.ChatRequest) (res *Result, err error) {
+	ctx, span := tracer.Start(ctx, "router")
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		} else {
+			span.SetAttributes(attribute.String("tollgate.served_model", res.Model), attribute.Int("tollgate.attempts", res.Attempts))
+		}
+		span.End()
+	}()
 	plan, err := r.Plan(req)
 	if err != nil {
 		return nil, err
 	}
+	span.SetAttributes(attribute.StringSlice("tollgate.plan", plan))
 	r.budget.deposit()
-	res := &Result{}
+	res = &Result{}
 	start := time.Now()
 	lastErr := ErrUnavailable
 
@@ -180,9 +197,12 @@ func (r *Router) Chat(ctx context.Context, req *api.ChatRequest) (*Result, error
 			up := *req // shallow copy; only Model differs
 			up.Model = native
 			actx, cancel := context.WithTimeout(ctx, r.cfg.AttemptTimeout)
+			actx, aspan := tracer.Start(actx, "provider.attempt", trace.WithAttributes(
+				attribute.String("tollgate.provider", provName), attribute.String("tollgate.model", model), attribute.Int("tollgate.attempt", attempt)))
 			t0 := time.Now()
 			resp, err := p.Chat(actx, &up)
 			elapsed := time.Since(t0)
+			endAttempt(aspan, err)
 			cancel()
 			res.Attempts++
 
@@ -222,6 +242,16 @@ func (r *Router) Chat(ctx context.Context, req *api.ChatRequest) (*Result, error
 		}
 	}
 	return nil, lastErr
+}
+
+func endAttempt(span trace.Span, err error) {
+	if pe, ok := providers.AsProviderError(err); ok {
+		span.SetAttributes(attribute.Int("tollgate.upstream_status", pe.Status), attribute.Bool("tollgate.retryable", pe.Retryable))
+	}
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.End()
 }
 
 // BreakerState is exposed for metrics and tests.

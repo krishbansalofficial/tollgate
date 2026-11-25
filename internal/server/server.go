@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/krishbansalofficial/tollgate/internal/api"
 	"github.com/krishbansalofficial/tollgate/internal/auth"
 	"github.com/krishbansalofficial/tollgate/internal/cache"
@@ -58,8 +60,6 @@ type Deps struct {
 	Logger           *slog.Logger
 	UpstreamTimeout  time.Duration
 	DefaultMaxTokens int
-	// Wrap is applied around the chat handler (tracing middleware); may be nil.
-	Wrap func(http.Handler) http.Handler
 }
 
 type Server struct{ Deps }
@@ -69,14 +69,11 @@ func New(d Deps) http.Handler {
 	if d.Observer == nil {
 		d.Observer = ObserverFunc(func(Outcome) {})
 	}
-	if d.Wrap == nil {
-		d.Wrap = func(h http.Handler) http.Handler { return h }
-	}
 	s := &Server{d}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", s.readyz)
-	mux.Handle("POST /v1/chat/completions", d.Wrap(auth.Middleware(d.Auth, writeError)(http.HandlerFunc(s.chat))))
+	mux.Handle("POST /v1/chat/completions", auth.Middleware(d.Auth, writeError)(http.HandlerFunc(s.chat)))
 	return s.requestID(s.accessLog(mux))
 }
 
@@ -154,7 +151,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		cacheKey = cache.Key(key.ProjectID, req)
 		hit, err := s.Cache.Get(r.Context(), cacheKey)
 		if err != nil {
-			s.Logger.Warn("cache get failed; treating as miss", "request_id", q.out.RequestID, "err", err)
+			s.Logger.WarnContext(r.Context(), "cache get failed; treating as miss", "request_id", q.out.RequestID, "err", err)
 		}
 		if hit != nil {
 			s.serveCacheHit(q, hit)
@@ -188,7 +185,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	s.reconcile(bg, q, used)
 	if cacheKey != "" {
 		if err := s.Cache.Set(bg, cacheKey, resp); err != nil {
-			s.Logger.Warn("cache set failed", "request_id", q.out.RequestID, "err", err)
+			s.Logger.WarnContext(bg, "cache set failed", "request_id", q.out.RequestID, "err", err)
 		}
 	}
 }
@@ -206,7 +203,7 @@ func (s *Server) admit(q *request) bool {
 	reserve := api.EstimatePromptTokens(&q.body) + maxOut
 	d, err := s.Limiter.Allow(q.r.Context(), q.key.ID, q.key.RPMLimit, q.key.TPMLimit, reserve)
 	if err != nil {
-		s.Logger.Warn("rate limiter degraded", "request_id", q.out.RequestID, "fail_open", d.Allowed, "err", err)
+		s.Logger.WarnContext(q.r.Context(), "rate limiter degraded", "request_id", q.out.RequestID, "fail_open", d.Allowed, "err", err)
 	}
 	h := q.w.Header()
 	if d.RemainingRequests >= 0 {
@@ -235,7 +232,7 @@ func (s *Server) reconcile(ctx context.Context, q *request, used int) {
 		return
 	}
 	if err := s.Limiter.Reconcile(ctx, q.key.ID, q.key.TPMLimit, q.reserved-used); err != nil {
-		s.Logger.Warn("rate limit reconcile failed", "request_id", q.out.RequestID, "err", err)
+		s.Logger.WarnContext(ctx, "rate limit reconcile failed", "request_id", q.out.RequestID, "err", err)
 	}
 }
 
@@ -273,29 +270,29 @@ func (s *Server) upstreamError(q *request, err error) {
 	pe, isPE := providers.AsProviderError(err)
 	switch {
 	case errors.Is(err, context.Canceled) && q.r.Context().Err() != nil:
-		log.Info("client canceled request")
+		log.InfoContext(q.r.Context(), "client canceled request")
 		q.out.Status, q.out.ErrorClass = 499, "client_canceled" // nginx convention; nothing is written
 	case errors.Is(err, context.DeadlineExceeded):
-		log.Warn("upstream timeout")
+		log.WarnContext(q.r.Context(), "upstream timeout")
 		q.fail(http.StatusGatewayTimeout, "timeout", "api_error", "", "upstream timed out")
 	case errors.Is(err, router.ErrUnavailable):
-		log.Warn("no provider available")
+		log.WarnContext(q.r.Context(), "no provider available")
 		q.fail(http.StatusServiceUnavailable, "no_provider", "api_error", "", "no upstream provider available; retry later")
 	case isPE && pe.ClientFault():
 		msg := "upstream rejected the request"
 		if pe.FromEnvelope {
 			msg = pe.Provider + ": " + pe.Message
 		}
-		log.Info("upstream rejected request", "status", pe.Status, "upstream_message", pe.Message)
+		log.InfoContext(q.r.Context(), "upstream rejected request", "status", pe.Status, "upstream_message", pe.Message)
 		q.fail(pe.Status, "upstream_client_error", "invalid_request_error", "", msg)
 	case isPE && pe.Status == http.StatusTooManyRequests:
-		log.Warn("upstream rate limited", "provider", pe.Provider, "retry_after", pe.RetryAfter)
+		log.WarnContext(q.r.Context(), "upstream rate limited", "provider", pe.Provider, "retry_after", pe.RetryAfter)
 		if pe.RetryAfter > 0 {
 			q.w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(pe.RetryAfter.Seconds()))))
 		}
 		q.fail(http.StatusServiceUnavailable, "upstream_rate_limited", "api_error", "", "upstream capacity exhausted; retry later")
 	default:
-		log.Error("upstream error", "err", err)
+		log.ErrorContext(q.r.Context(), "upstream error", "err", err)
 		q.fail(http.StatusBadGateway, "upstream_error", "api_error", "", "upstream provider error")
 	}
 }
@@ -330,12 +327,17 @@ func requestIDFrom(ctx context.Context) string {
 }
 
 // requestID honours an incoming X-Request-ID (so a caller can correlate its
-// own logs) if it's sane, else generates one, and echoes it on the response.
+// own logs) if it's sane; otherwise it uses the trace ID, so the ID a client
+// reports can be pasted straight into the trace viewer. It echoes the ID.
 func (s *Server) requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
 		if id == "" || len(id) > 128 {
-			id = newID()
+			if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
+				id = sc.TraceID().String()
+			} else {
+				id = newID()
+			}
 		}
 		w.Header().Set("X-Request-ID", id)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ridKey{}, id)))

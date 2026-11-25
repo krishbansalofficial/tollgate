@@ -5,7 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
+
+var tracer = otel.Tracer("github.com/krishbansalofficial/tollgate/internal/auth")
 
 type ctxKey struct{}
 
@@ -28,7 +34,14 @@ func Middleware(a *Authenticator, writeErr ErrorWriter) func(http.Handler) http.
 				writeErr(w, r, http.StatusUnauthorized, "invalid_request_error", "missing bearer API key")
 				return
 			}
-			k, err := a.Authenticate(r.Context(), strings.TrimSpace(raw))
+			ctx, span := tracer.Start(r.Context(), "auth")
+			k, err := a.Authenticate(ctx, strings.TrimSpace(raw))
+			if err != nil {
+				span.SetStatus(codes.Error, err.Error())
+			} else {
+				span.SetAttributes(attribute.String("tollgate.project", k.ProjectName))
+			}
+			span.End()
 			switch {
 			case errors.Is(err, ErrInvalidKey):
 				writeErr(w, r, http.StatusUnauthorized, "invalid_request_error", "invalid API key")

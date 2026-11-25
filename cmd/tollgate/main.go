@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/krishbansalofficial/tollgate/internal/auth"
 	"github.com/krishbansalofficial/tollgate/internal/cache"
@@ -31,8 +32,13 @@ import (
 	"github.com/krishbansalofficial/tollgate/internal/ratelimit"
 	"github.com/krishbansalofficial/tollgate/internal/router"
 	"github.com/krishbansalofficial/tollgate/internal/server"
+	"github.com/krishbansalofficial/tollgate/internal/telemetry"
+	"github.com/krishbansalofficial/tollgate/internal/usage"
 	"github.com/krishbansalofficial/tollgate/migrations"
 )
+
+// version is set at build time: -ldflags "-X main.version=<git sha>".
+var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -50,7 +56,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	log := slog.New(telemetry.TraceHandler{Handler: slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})}).With("version", version)
 
 	// SIGTERM is what Kubernetes sends; SIGINT is Ctrl-C locally.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -79,6 +85,14 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpo
 	if err != nil {
 		return err
 	}
+	shutdownTracing, err := telemetry.SetupTracing(ctx, cfg.OTLPEndpoint, cfg.TraceSampleRatio, version)
+	if err != nil {
+		return fmt.Errorf("tracing: %w", err)
+	}
+	metrics := telemetry.NewMetrics()
+	ledger := usage.NewWriter(usage.NewPGSink(pool), cfg.UsageBuffer, log)
+	metrics.UsageGauges(ledger.Dropped, ledger.Written, ledger.Buffered)
+	ledger.Start()
 	provs := buildProviders(cfg)
 	if len(provs) == 0 {
 		return errors.New("no providers configured: set at least one provider API key or TOLLGATE_MOCK_BASE_URL")
@@ -92,6 +106,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpo
 	rcfg.MaxAttempts, rcfg.AttemptTimeout, rcfg.Fallback = cfg.MaxAttempts, cfg.AttemptTimeout, cfg.FallbackModel
 	rt := router.New(rcfg, catalog, provs, func(p string, s router.State) {
 		log.Warn("circuit breaker state change", "provider", p, "state", s.String())
+		metrics.BreakerChanged(p, s)
 	})
 
 	var limiter *ratelimit.Limiter
@@ -115,6 +130,12 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpo
 		Limiter: limiter,
 		Cache:   respCache,
 		Router:  rt,
+		// Fan out each request's Outcome to metrics and the ledger. Both are
+		// non-blocking (counter increments; a non-blocking channel send).
+		Observer: server.ObserverFunc(func(o server.Outcome) {
+			metrics.Observe(o)
+			ledger.Record(toEvent(o))
+		}),
 		Ready: func(ctx context.Context) error {
 			if draining.Load() {
 				return errors.New("shutting down")
@@ -128,14 +149,31 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpo
 		DefaultMaxTokens: cfg.DefaultMaxTokens,
 	})
 
+	// otelhttp is the outermost layer so the root span (and its trace ID,
+	// used as the request ID) exists before any other middleware runs.
+	// Probes are filtered out: they'd be most of the traces and none of the value.
+	root := otelhttp.NewHandler(metrics.Middleware(handler), "gateway",
+		otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/healthz" && r.URL.Path != "/readyz" }),
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return r.Method + " " + r.URL.Path }))
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           handler,
+		Handler:           root,
 		ReadHeaderTimeout: 10 * time.Second, // slowloris guard
 		IdleTimeout:       120 * time.Second,
 		// No WriteTimeout: it caps the whole response, which would kill long
 		// streams. Per-write deadlines via http.ResponseController instead.
 	}
+	// Metrics on their own port: Prometheus scrapes it in-cluster, and the
+	// ingress only routes the API port, so /metrics is never public.
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", metrics.Handler())
+	msrv := &http.Server{Addr: cfg.MetricsAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		if err := msrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("metrics server", "err", err)
+		}
+	}()
+
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", cfg.Addr, "providers", len(provs), "fallback", cfg.FallbackModel)
@@ -154,17 +192,47 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpo
 	//    kube-proxy/ingress asynchronously, so for a few seconds new requests
 	//    still arrive. Closing the listener immediately would refuse them.
 	// 3. Shutdown: stop accepting, wait for in-flight requests to finish.
+	// 4. Only then close the ledger, so every finished request's row is
+	//    buffered before the final flush; then flush spans; metrics last so
+	//    a final scrape can still see the shutdown.
 	log.Info("shutdown: draining", "delay", cfg.ShutdownDelay)
 	draining.Store(true)
 	time.Sleep(cfg.ShutdownDelay)
 
 	sctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
+	var errs []error
 	if err := srv.Shutdown(sctx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
+		errs = append(errs, fmt.Errorf("http shutdown: %w", err))
 	}
-	log.Info("shutdown: complete")
-	return nil
+	if err := ledger.Close(sctx); err != nil {
+		errs = append(errs, fmt.Errorf("usage flush: %w", err))
+	}
+	if err := shutdownTracing(sctx); err != nil {
+		errs = append(errs, fmt.Errorf("trace flush: %w", err))
+	}
+	_ = msrv.Shutdown(sctx)
+	log.Info("shutdown: complete", "usage_written", ledger.Written(), "usage_dropped", ledger.Dropped())
+	return errors.Join(errs...)
+}
+
+// toEvent converts a request Outcome into a ledger row.
+func toEvent(o server.Outcome) usage.Event {
+	e := usage.Event{
+		TS: time.Now().Add(-o.Latency), RequestID: o.RequestID, ProjectID: o.ProjectID, KeyID: o.KeyID,
+		Model: o.Model, Provider: o.Provider, TokensIn: o.TokensIn, TokensOut: o.TokensOut,
+		UsageEstimated: o.UsageEstimated, LatencyMS: int(o.Latency.Milliseconds()), UpstreamMS: int(o.Upstream.Milliseconds()),
+		CostUSD: o.CostUSD, CostSavedUSD: o.CostSavedUSD, Cache: o.Cache, Status: o.Status,
+		ErrorClass: o.ErrorClass, Attempts: o.Attempts, Stream: o.Stream,
+	}
+	if o.TTFT > 0 {
+		ms := int(o.TTFT.Milliseconds())
+		e.TTFTMS = &ms
+	}
+	if e.Provider == "" {
+		e.Provider = "none"
+	}
+	return e
 }
 
 // buildProviders enables each provider whose credentials or URL are set. All

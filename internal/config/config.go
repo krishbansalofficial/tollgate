@@ -43,7 +43,7 @@ type Config struct {
 	// Usage ledger and telemetry.
 	UsageBuffer      int     // TOLLGATE_USAGE_BUFFER rows held in memory before dropping
 	OTLPEndpoint     string  // OTEL_EXPORTER_OTLP_ENDPOINT (host:port); empty disables tracing
-	TraceSampleRatio float64 // TOLLGATE_TRACE_SAMPLE_RATIO
+	TraceSampleRatio float64 // TOLLGATE_TRACE_SAMPLE_RATIO (head sampling; the collector tail-samples)
 
 	// Lifecycle.
 	ShutdownDelay   time.Duration // TOLLGATE_SHUTDOWN_DELAY
@@ -121,7 +121,7 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("TOLLGATE_RATELIMIT_FAIL_MODE: want open|closed, got %q", m))
 	}
-	ratio, err := strconv.ParseFloat(str("TOLLGATE_TRACE_SAMPLE_RATIO", "0.1"), 64)
+	ratio, err := strconv.ParseFloat(str("TOLLGATE_TRACE_SAMPLE_RATIO", "1"), 64)
 	if err != nil || ratio < 0 || ratio > 1 {
 		errs = append(errs, errors.New("TOLLGATE_TRACE_SAMPLE_RATIO: want a number in [0,1]"))
 	}

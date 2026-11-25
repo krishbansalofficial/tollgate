@@ -14,7 +14,12 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
+
+var tracer = otel.Tracer("github.com/krishbansalofficial/tollgate/internal/ratelimit")
 
 var (
 	//go:embed common.lua
@@ -58,7 +63,16 @@ func tokKey(id string) string { return "rl:{" + id + "}:tok" }
 
 // Allow reserves one request and `tokens` tokens for keyID. A non-nil error
 // means Redis failed; the Decision is still usable (it follows the fail mode).
-func (l *Limiter) Allow(ctx context.Context, keyID string, rpm, tpm, tokens int) (Decision, error) {
+func (l *Limiter) Allow(ctx context.Context, keyID string, rpm, tpm, tokens int) (d Decision, err error) {
+	ctx, span := tracer.Start(ctx, "ratelimit.allow")
+	defer func() {
+		span.SetAttributes(attribute.Bool("tollgate.allowed", d.Allowed), attribute.Bool("tollgate.degraded", d.Degraded),
+			attribute.Int("tollgate.reserved_tokens", d.Reserved))
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 	// A reservation larger than the whole bucket could never succeed; cap it
 	// so a huge max_tokens waits for a full bucket instead of failing forever.
 	if tokens < 0 {
@@ -73,7 +87,7 @@ func (l *Limiter) Allow(ctx context.Context, keyID string, rpm, tpm, tokens int)
 	if err != nil || len(res) != 4 {
 		return Decision{Allowed: l.failOpen, Degraded: true, RemainingRequests: -1, RemainingTokens: -1}, errOr(err)
 	}
-	d := Decision{
+	d = Decision{
 		Allowed:           res[0] == 1,
 		RetryAfter:        time.Duration(res[1]) * time.Millisecond,
 		RemainingRequests: int(res[2]),

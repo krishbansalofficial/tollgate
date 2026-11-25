@@ -11,9 +11,13 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/krishbansalofficial/tollgate/internal/api"
 )
+
+var tracer = otel.Tracer("github.com/krishbansalofficial/tollgate/internal/cache")
 
 // Cacheable reports whether a response may be reused for an identical
 // request. Only an explicit temperature of 0 qualifies: if temperature is
@@ -75,9 +79,12 @@ func New(rdb redis.Cmdable, ttl time.Duration) *Cache {
 // Get returns (nil, nil) on a miss. Callers treat any error as a miss: the
 // cache is an optimisation and must never fail a request.
 func (c *Cache) Get(ctx context.Context, key string) (*api.ChatResponse, error) {
+	ctx, span := tracer.Start(ctx, "cache.get")
+	defer span.End()
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	b, err := c.rdb.Get(ctx, key).Bytes()
+	span.SetAttributes(attribute.Bool("tollgate.cache_hit", err == nil))
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
@@ -96,6 +103,8 @@ func (c *Cache) Set(ctx context.Context, key string, resp *api.ChatResponse) err
 	if err != nil {
 		return err
 	}
+	ctx, span := tracer.Start(ctx, "cache.set")
+	defer span.End()
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	return c.rdb.Set(ctx, key, b, c.ttl).Err()
