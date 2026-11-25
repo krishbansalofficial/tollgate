@@ -24,6 +24,7 @@ type ChatRequest struct {
 	PresencePenalty  *float64        `json:"presence_penalty,omitempty"`
 	FrequencyPenalty *float64        `json:"frequency_penalty,omitempty"`
 	Stream           bool            `json:"stream,omitempty"`
+	StreamOptions    *StreamOptions  `json:"stream_options,omitempty"`
 	Tools            json.RawMessage `json:"tools,omitempty"`
 	ToolChoice       json.RawMessage `json:"tool_choice,omitempty"`
 	ResponseFormat   json.RawMessage `json:"response_format,omitempty"`

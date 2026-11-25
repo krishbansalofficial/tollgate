@@ -19,6 +19,9 @@ type scripted struct {
 	errs  []error
 	calls atomic.Int64
 	delay time.Duration
+
+	chunkDelay  time.Duration // streams: delay before each chunk
+	emptyStream bool          // streams: end before the first chunk
 }
 
 func (s *scripted) Name() string { return s.name }

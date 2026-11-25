@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/krishbansalofficial/tollgate/internal/api"
@@ -15,10 +16,21 @@ import (
 
 // Provider is one upstream LLM API. req.Model is already the provider-native
 // model ID; the router strips the "provider/" prefix before calling.
-// Streaming (ChatStream) is added in Phase 5.
 type Provider interface {
 	Name() string
 	Chat(ctx context.Context, req *api.ChatRequest) (*api.ChatResponse, error)
+	// ChatStream opens a streamed completion. Errors before the stream opens
+	// are returned here; errors after it opens come from Stream.Recv.
+	ChatStream(ctx context.Context, req *api.ChatRequest) (Stream, error)
+}
+
+// Stream yields OpenAI-shaped chunks. Recv returns io.EOF after the last
+// chunk; any other error means the stream broke. Close must always be called
+// and releases the upstream connection. Chunks may carry Usage (typically the
+// last one); callers must not assume a usage chunk arrives.
+type Stream interface {
+	Recv() (*api.ChatChunk, error)
+	Close() error
 }
 
 // ProviderError is every upstream failure, normalised so the router can
@@ -37,6 +49,26 @@ type ProviderError struct {
 
 func (e *ProviderError) Error() string {
 	return fmt.Sprintf("%s: upstream status %d: %s", e.Provider, e.Status, e.Message)
+}
+
+// credentialHints mark upstream messages about the gateway's own account
+// rather than the client's request. They are never relayed to clients.
+var credentialHints = []string{"api key", "api_key", "apikey", "credential", "billing", "quota", "project", "organization"}
+
+// ClientMessage returns the upstream message if it is safe to show the
+// client: it came from a parsed error envelope and does not mention the
+// gateway's credentials, account or quota.
+func (e *ProviderError) ClientMessage() (string, bool) {
+	if !e.FromEnvelope {
+		return "", false
+	}
+	lower := strings.ToLower(e.Message)
+	for _, h := range credentialHints {
+		if strings.Contains(lower, h) {
+			return "", false
+		}
+	}
+	return e.Message, true
 }
 
 // ClientFault reports an error caused by the client's own request. Another

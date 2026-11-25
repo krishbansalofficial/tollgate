@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"sync/atomic"
@@ -174,6 +175,10 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpo
 		}
 	}()
 
+	if cfg.PprofAddr != "" {
+		servePprof(cfg.PprofAddr, log)
+	}
+
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", cfg.Addr, "providers", len(provs), "fallback", cfg.FallbackModel)
@@ -258,6 +263,27 @@ func waitForDB(ctx context.Context, pool *pgxpool.Pool, limit time.Duration) err
 	}
 }
 
+// servePprof exposes Go's profiler on its own listener, opt-in only. The
+// handlers are registered on a private mux: importing net/http/pprof also
+// registers them on http.DefaultServeMux, which nothing here serves, so they
+// can never leak onto the API or metrics ports. Bind it to localhost (or map
+// it to 127.0.0.1 on the host): profiles reveal internals.
+func servePprof(addr string, log *slog.Logger) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	log.Warn("pprof enabled", "addr", addr)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			log.Error("pprof server", "err", err)
+		}
+	}()
+}
+
 // buildProviders enables each provider whose credentials or URL are set. All
 // share one tuned transport per provider (see providers.NewHTTPClient).
 func buildProviders(cfg config.Config) map[string]providers.Provider {
@@ -267,6 +293,9 @@ func buildProviders(cfg config.Config) map[string]providers.Provider {
 	}
 	if cfg.AnthropicAPIKey != "" {
 		provs["anthropic"] = providers.NewAnthropic(cfg.AnthropicBaseURL, cfg.AnthropicAPIKey, cfg.DefaultMaxTokens, providers.NewHTTPClient())
+	}
+	if cfg.GeminiAPIKey != "" {
+		provs["gemini"] = providers.NewGemini(cfg.GeminiBaseURL, cfg.GeminiAPIKey, providers.NewHTTPClient())
 	}
 	if cfg.OllamaBaseURL != "" {
 		provs["ollama"] = providers.NewOpenAICompat("ollama", cfg.OllamaBaseURL, "", providers.NewHTTPClient())
