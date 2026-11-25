@@ -28,7 +28,7 @@ func TestConcurrentAdmissionRealRedis(t *testing.T) {
 	}
 	opts.PoolSize = 64 // real parallelism: many connections hitting Redis at once
 	rdb := redis.NewClient(opts)
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	testConcurrentAdmission(t, rdb)
 }
