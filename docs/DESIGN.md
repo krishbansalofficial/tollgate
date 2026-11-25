@@ -244,9 +244,9 @@ Key management for the MVP is a CLI: `tollgate keys create --project X` prints t
 - End-to-end: gateway → `mockupstream` with error injection, covering retry, breaker, fallback, and stream interruption.
 - CI: `go vet`, `golangci-lint` (includes staticcheck), and `go test -race`.
 
-## 9. Open decisions (need your call)
+## 9. Decisions (2026-11-24)
 
-1. **Provider transport:** raw `net/http` (recommended) vs official SDKs.
-2. **Deploy packaging:** Kustomize plain manifests (recommended) vs a Helm chart.
-3. **First real provider in Phase 1:** Groq (recommended: free tier, OpenAI-compatible, so Phase 1 tests the pipeline and not the translation) vs Anthropic.
-4. **Domain** for TLS: an existing domain or a free DuckDNS subdomain.
+1. **Provider transport:** raw `net/http`. Vendor SDKs have their own built-in retries that would conflict with the router's retry and breaker logic.
+2. **Deploy packaging:** Kustomize plain manifests. CI bumps the image tag with `kustomize edit set image`.
+3. **First real provider:** Groq (Phase 1), then Anthropic (Phase 2) and Gemini (Phase 5).
+4. **Domain:** a free DuckDNS subdomain with Let's Encrypt HTTP-01.
