@@ -131,7 +131,28 @@ func result(e entry) (Key, error) {
 // Why it matters: anyone can send well-formed but random keys, and each one
 // creates a negative entry. Without a bound, a key-spraying client grows this
 // map until the pod is OOM-killed.
+//
+// Policy: sweep expired entries first (free, and usually enough). If the map
+// is still full, which happens only when it is flooded with fresh entries,
+// drop ~10% chosen at random. Go randomises map iteration order, so ranging
+// over the map is a cheap random sample. A true LRU needs a linked list and
+// touching it on every read; with a 30s TTL the extra hit rate isn't worth
+// it. Worst case, a legitimate key gets evicted and costs one DB query.
 func (a *Authenticator) evictLocked(now time.Time) {
-	// TODO(you): choose and implement the eviction policy. See the PR notes.
-	_ = now
+	for h, e := range a.cache {
+		if !now.Before(e.expires) {
+			delete(a.cache, h)
+		}
+	}
+	if len(a.cache) < a.maxEntries {
+		return
+	}
+	drop := a.maxEntries / 10
+	for h := range a.cache {
+		if drop <= 0 {
+			break
+		}
+		delete(a.cache, h)
+		drop--
+	}
 }

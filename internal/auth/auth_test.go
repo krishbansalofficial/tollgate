@@ -174,6 +174,27 @@ func TestSingleflight(t *testing.T) {
 	}
 }
 
+// TestCacheBounded: spraying unknown (but well-formed) keys must not grow the
+// cache past maxEntries.
+func TestCacheBounded(t *testing.T) {
+	a, _, c, _ := setup(t)
+	a.maxEntries = 100
+	for range 1000 {
+		k, _, _, _ := Generate()
+		_, _ = a.Authenticate(context.Background(), k)
+		if len(a.cache) > a.maxEntries {
+			t.Fatalf("cache grew to %d > %d", len(a.cache), a.maxEntries)
+		}
+	}
+	// Once entries expire, the sweep alone frees space.
+	c.advance(time.Minute)
+	k, _, _, _ := Generate()
+	_, _ = a.Authenticate(context.Background(), k)
+	if len(a.cache) != 1 {
+		t.Fatalf("after expiry sweep: %d entries, want 1", len(a.cache))
+	}
+}
+
 func TestMiddleware(t *testing.T) {
 	a, st, _, raw := setup(t)
 	writeErr := func(w http.ResponseWriter, _ *http.Request, status int, _, msg string) { http.Error(w, msg, status) }
