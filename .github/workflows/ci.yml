@@ -150,6 +150,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # Latest main, not the triggering commit: an earlier run's bump may
+          # already have edited the same line, and a stale copy would conflict.
+          ref: main
           persist-credentials: false # the token is used only by the push below
       - name: pin image digest in deploy/tollgate
         env:
