@@ -1,0 +1,76 @@
+// Package providers defines the Provider interface and the adapters that
+// translate Tollgate's canonical (OpenAI) schema to each upstream's API.
+package providers
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/krishbansalofficial/tollgate/internal/api"
+)
+
+// Provider is one upstream LLM API. req.Model is already the provider-native
+// model ID; the router strips the "provider/" prefix before calling.
+// Streaming (ChatStream) is added in Phase 5.
+type Provider interface {
+	Name() string
+	Chat(ctx context.Context, req *api.ChatRequest) (*api.ChatResponse, error)
+}
+
+// ProviderError is every upstream failure, normalised so the router can
+// decide retry/fallback without knowing which provider it came from.
+type ProviderError struct {
+	Provider   string
+	Status     int           // upstream HTTP status; 0 for transport errors
+	Retryable  bool          // 408, 429, 5xx, timeouts, connection failures
+	RetryAfter time.Duration // from the upstream Retry-After header, if any
+	Message    string
+}
+
+func (e *ProviderError) Error() string {
+	return fmt.Sprintf("%s: upstream status %d: %s", e.Provider, e.Status, e.Message)
+}
+
+// retryableStatus reports whether retrying the same request could succeed.
+// 4xx other than 408/429 mean the request itself is bad, so a retry (or a
+// different provider) would fail the same way.
+func retryableStatus(code int) bool {
+	return code == http.StatusRequestTimeout || code == http.StatusTooManyRequests || code >= 500
+}
+
+// parseRetryAfter handles both forms allowed by RFC 9110: delay-seconds and
+// an HTTP-date. Unparseable or past values yield 0.
+func parseRetryAfter(h string, now time.Time) time.Duration {
+	if h == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(h); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(h); err == nil && t.After(now) {
+		return t.Sub(now)
+	}
+	return 0
+}
+
+// NewHTTPClient returns the client shared by all requests to one provider.
+// http.DefaultTransport keeps only 2 idle connections per host, so under
+// concurrency most requests would pay a fresh TCP+TLS handshake to the same
+// upstream. Raising MaxIdleConnsPerHost keeps connections warm.
+//
+// No client-level Timeout: deadlines come from the request context, so one
+// mechanism controls both cancellation and timeouts (and streaming, which
+// can legitimately run for minutes, isn't killed by a fixed timeout).
+func NewHTTPClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 200
+	t.MaxIdleConnsPerHost = 100
+	t.IdleConnTimeout = 90 * time.Second
+	t.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	t.ResponseHeaderTimeout = 0 // governed by ctx; LLMs can take long before the first header
+	return &http.Client{Transport: t}
+}
