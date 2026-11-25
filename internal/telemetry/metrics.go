@@ -110,7 +110,9 @@ func (m *Metrics) Observe(o server.Outcome) {
 		model, provider = "none", "none"
 	}
 	m.requests.WithLabelValues(model, provider, strconv.Itoa(o.Status), o.Cache).Inc()
-	if o.ErrorClass != "" && o.Status >= 500 {
+	// Interrupted streams end with status 200 (headers were already sent),
+	// but they are provider failures all the same.
+	if o.ErrorClass != "" && (o.Status >= 500 || o.ErrorClass == "stream_interrupted") {
 		m.provErrors.WithLabelValues(provider, o.ErrorClass).Inc()
 	}
 	m.overhead.Observe((o.Latency - o.Upstream).Seconds())
