@@ -26,6 +26,7 @@ ledger() { $DC exec -T postgres psql -U tollgate -tAc "$1"; }
 mock() { # mock <service> <args...>: restart a mock with new flags
   local svc=$1; shift
   $DC rm -sf "$svc" >/dev/null 2>&1
+  docker rm -f "${P}-${svc}-x" >/dev/null 2>&1
   $DC run -d --no-deps --name "${P}-${svc}-x" --use-aliases --entrypoint /usr/local/bin/mockupstream "$svc" -addr :8081 "$@" >/dev/null
   sleep 1
 }
@@ -33,7 +34,7 @@ mock() { # mock <service> <args...>: restart a mock with new flags
 scenario_redis() {
   echo "### Redis down"
   for mode in open closed; do
-    $DC down -v >/dev/null 2>&1; up "$mode"; KEY=$(key)
+    $DC down -v --remove-orphans >/dev/null 2>&1; docker rm -f "${P}-mockupstream-x" >/dev/null 2>&1; up "$mode"; KEY=$(key)
     echo "-- fail mode: $mode; healthy:"; burst 5 "$BODY"
     $DC stop redis >/dev/null 2>&1
     echo "-- fail mode: $mode; Redis stopped:"; burst 20 "$BODY"
@@ -47,22 +48,25 @@ scenario_redis() {
 
 scenario_provider() {
   echo "### Primary provider failing (fallback = ollama -> mockbackup)"
-  $DC down -v >/dev/null 2>&1; up open; KEY=$(key)
+  $DC down -v --remove-orphans >/dev/null 2>&1; docker rm -f "${P}-mockupstream-x" >/dev/null 2>&1; up open; KEY=$(key)
   for flags in "-error-rate 1" "-429-rate 1" "-error-rate 0.3"; do
     mock mockupstream -latency 20ms $flags
-    echo "-- primary: $flags (40 requests)"; burst 40 "$BODY"
+    $DC restart tollgate >/dev/null 2>&1; sleep 4 # fresh breaker per phase
+    ledger "truncate usage_events" >/dev/null
+    echo "-- primary: $flags (40 requests): status, provider"; burst 40 "$BODY"
+    sleep 2
+    echo "   ledger: provider | status | requests | mean attempts | p50 latency ms"
+    ledger "select provider, status, count(*), round(avg(attempts),2), percentile_cont(0.5) within group (order by latency_ms) from usage_events group by 1,2 order by 1,2" | sed 's/^/   /'
+    echo "   breaker log: $($DC logs tollgate --since 30s 2>&1 | grep -o '"state":"[a-z_]*"' | tr '
+' ' ')"
   done
-  echo "-- breaker state (0 closed, 1 open, 2 half-open):"; sleep 16; metric 'tollgate_breaker_state'
-  echo "-- provider errors by class:"; metric 'sum by (provider, class) (tollgate_provider_errors_total)'
-  echo "-- ledger: requests by provider/status, mean attempts"
-  ledger "select provider, status, count(*), round(avg(attempts),2) from usage_events group by 1,2 order by 1,2"
 }
 
 scenario_kill() {
   echo "### Gateway killed mid-stream (20 chunks x 400 ms = ~8 s stream)"
   SB='{"model":"mock/small","stream":true,"messages":[{"role":"user","content":"long"}]}'
   for sig in SIGTERM SIGKILL; do
-    $DC down -v >/dev/null 2>&1; up open; KEY=$(key)
+    $DC down -v --remove-orphans >/dev/null 2>&1; docker rm -f "${P}-mockupstream-x" >/dev/null 2>&1; up open; KEY=$(key)
     before=$(ledger "select count(*) from usage_events")
     out=$(mktemp)
     curl -sN -m 30 "$URL" -H "Authorization: Bearer $KEY" -d "$SB" >"$out" 2>&1 &
@@ -84,4 +88,4 @@ case ${1:-all} in
   kill) scenario_kill ;;
   all) scenario_redis; scenario_provider; scenario_kill ;;
 esac
-$DC down -v >/dev/null 2>&1
+$DC down -v --remove-orphans >/dev/null 2>&1; docker rm -f "${P}-mockupstream-x" >/dev/null 2>&1
