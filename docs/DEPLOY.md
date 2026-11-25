@@ -120,6 +120,16 @@ When the laptop sleeps, Ollama's circuit breaker opens and the fallback fails fa
 | Trace a request | paste its `X-Request-ID` into Grafana → Explore → Tempo |
 | Alerts | Prometheus `/alerts` and Grafana; no Alertmanager, to keep $0 |
 
+## Alternative host: DigitalOcean (GitHub Student Pack credit)
+
+`infra/terraform/envs/digitalocean` builds an `s-2vcpu-4gb` droplet (amd64, ~$24/month) with the same cloud-init module. The Student Pack's $200 credit covers about 8 months.
+
+1. Claim the DigitalOcean offer from the Student Pack page, then DO console → **API** → Generate New Token (read + write).
+2. `cp terraform.tfvars.example terraform.tfvars` in that directory and fill it in.
+3. `terraform init && terraform apply`, then steps 3–7 above with `root@<ip>` in place of `ubuntu@<ip>`.
+
+The image is multi-arch, so amd64 needs no changes. **Destroy the droplet or move to Hetzner before the credit expires**, or it bills the card on file. Set a billing alert in the DO console.
+
 ## Fallback host: Hetzner (≈ €4/month)
 
 If Oracle has no A1 capacity or changes the free tier again, `infra/terraform/envs/hetzner` builds a CAX11 (2 vCPU ARM64, 4 GB) with **the same cloud-init module**. Steps 3–7 are identical; use `root@<ip>` instead of `ubuntu@<ip>`. 4 GB fits the stack; Argo CD and Prometheus are the largest consumers.
