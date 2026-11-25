@@ -189,7 +189,7 @@ func TestChatErrors(t *testing.T) {
 		{name: "bad json", body: `{`, wantStatus: 400},
 		{name: "no messages", body: `{"model":"mock/x","messages":[]}`, wantStatus: 400},
 		{name: "negative max_tokens", body: `{"model":"mock/x","max_tokens":-5,"messages":[{"role":"user","content":"hi"}]}`, wantStatus: 400},
-		{name: "stream unsupported", body: `{"model":"mock/x","stream":true,"messages":[{"role":"user","content":"hi"}]}`, wantStatus: 400},
+		{name: "stream with unknown model", body: `{"model":"mock/x","stream":true,"messages":[{"role":"user","content":"hi"}]}`, wantStatus: 404},
 		{name: "unknown provider", body: `{"model":"nope/x","messages":[{"role":"user","content":"hi"}]}`, wantStatus: 404},
 		{name: "no provider prefix", body: `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`, wantStatus: 404},
 		{name: "upstream 500", opts: gwOpts{primary: mockupstream.Config{ErrorRate: 1}}, body: okBody, wantStatus: 502},

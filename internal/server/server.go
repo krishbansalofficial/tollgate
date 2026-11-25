@@ -128,9 +128,6 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	case req.MaxTokens != nil && *req.MaxTokens < 1:
 		q.fail(http.StatusBadRequest, "invalid_request", "invalid_request_error", "", "max_tokens must be at least 1")
 		return
-	case req.Stream:
-		q.fail(http.StatusBadRequest, "invalid_request", "invalid_request_error", "", "streaming is not supported yet")
-		return
 	case !s.Router.Known(req.Model):
 		// Checked before rate limiting so a typo doesn't spend the caller's quota.
 		q.fail(http.StatusNotFound, "invalid_request", "invalid_request_error", "model_not_found",
@@ -145,6 +142,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	// hanging up, but stay bounded: detach from cancellation, keep values
 	// (trace context), and rely on each call's own short timeout.
 	bg := context.WithoutCancel(r.Context())
+
+	if req.Stream {
+		s.serveStream(q, bg) // streams are never cached
+		return
+	}
 
 	var cacheKey string
 	if s.Cache != nil && cache.Cacheable(req) {

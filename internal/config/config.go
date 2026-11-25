@@ -43,6 +43,7 @@ type Config struct {
 	// Usage ledger and telemetry.
 	UsageBuffer      int     // TOLLGATE_USAGE_BUFFER rows held in memory before dropping
 	OTLPEndpoint     string  // OTEL_EXPORTER_OTLP_ENDPOINT (host:port); empty disables tracing
+	PprofAddr        string  // TOLLGATE_PPROF_ADDR; serves net/http/pprof there when set (default off)
 	TraceSampleRatio float64 // TOLLGATE_TRACE_SAMPLE_RATIO (head sampling; the collector tail-samples)
 
 	// Lifecycle.
@@ -108,6 +109,7 @@ func Load(getenv func(string) string) (Config, error) {
 		KeyCacheTTL:      dur("TOLLGATE_KEY_CACHE_TTL", 30*time.Second),
 		UsageBuffer:      integer("TOLLGATE_USAGE_BUFFER", 10_000, 1),
 		OTLPEndpoint:     getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		PprofAddr:        getenv("TOLLGATE_PPROF_ADDR"),
 		ShutdownDelay:    dur("TOLLGATE_SHUTDOWN_DELAY", 5*time.Second),
 		ShutdownTimeout:  dur("TOLLGATE_SHUTDOWN_TIMEOUT", 20*time.Second),
 	}
