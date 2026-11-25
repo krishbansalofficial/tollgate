@@ -132,27 +132,29 @@ func result(e entry) (Key, error) {
 // creates a negative entry. Without a bound, a key-spraying client grows this
 // map until the pod is OOM-killed.
 //
-// Policy: sweep expired entries first (free, and usually enough). If the map
-// is still full, which happens only when it is flooded with fresh entries,
-// drop ~10% chosen at random. Go randomises map iteration order, so ranging
-// over the map is a cheap random sample. A true LRU needs a linked list and
-// touching it on every read; with a 30s TTL the extra hit rate isn't worth
-// it. Worst case, a legitimate key gets evicted and costs one DB query.
+// Policy, in order of preference:
+//  1. Drop expired entries and all negative entries. Negative entries are the
+//     only state an unauthenticated client can create, so a spray evicts its
+//     own garbage before it can displace resolved (legitimate) keys.
+//  2. Only if still above the low-water mark, drop positive entries at random.
+//     Go randomises map iteration order, so ranging is a cheap random sample.
+//
+// Cost: each call is O(n) under the write lock, but it always frees at least
+// 10% of capacity (the low-water mark), so it runs at most once per
+// maxEntries/10 inserts: amortised O(10) per miss, never once per miss.
+// A true LRU would need a linked list touched on every read; with a 30s TTL
+// the extra hit rate isn't worth it.
 func (a *Authenticator) evictLocked(now time.Time) {
+	lowWater := a.maxEntries - a.maxEntries/10
 	for h, e := range a.cache {
-		if !now.Before(e.expires) {
+		if !e.found || !now.Before(e.expires) {
 			delete(a.cache, h)
 		}
 	}
-	if len(a.cache) < a.maxEntries {
-		return
-	}
-	drop := a.maxEntries / 10
 	for h := range a.cache {
-		if drop <= 0 {
-			break
+		if len(a.cache) <= lowWater {
+			return
 		}
 		delete(a.cache, h)
-		drop--
 	}
 }

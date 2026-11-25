@@ -186,6 +186,20 @@ func TestCacheBounded(t *testing.T) {
 			t.Fatalf("cache grew to %d > %d", len(a.cache), a.maxEntries)
 		}
 	}
+	// A spray of unknown keys must never evict a resolved key.
+	a2, st2, _, good := setup(t)
+	a2.maxEntries = 100
+	_, _ = a2.Authenticate(context.Background(), good)
+	for range 1000 {
+		k, _, _, _ := Generate()
+		_, _ = a2.Authenticate(context.Background(), k)
+	}
+	before := st2.calls.Load()
+	_, _ = a2.Authenticate(context.Background(), good)
+	if st2.calls.Load() != before {
+		t.Fatal("legitimate key was evicted by an unknown-key spray")
+	}
+
 	// Once entries expire, the sweep alone frees space.
 	c.advance(time.Minute)
 	a.mu.Lock()
