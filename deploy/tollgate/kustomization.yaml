@@ -17,8 +17,8 @@ resources:
 # the commit and rolls it out. Do not edit by hand.
 images:
   - name: ghcr.io/krishbansalofficial/tollgate
-    newTag: sha-93e561face8d
-    digest: sha256:d5d3ef6a4965ff0544d85b1a692b51b90db47bafe08e50b0cd162fd5f9d2c1a4
+    newTag: sha-c7fd0b8c62fe
+    digest: sha256:59c6fb84caa1c27f1e36ef801808c42627c352d86255bb9e4083eac81a5c8329
 
 configMapGenerator:
   - name: tollgate-config
