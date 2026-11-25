@@ -39,6 +39,7 @@ services:
       TOLLGATE_OLLAMA_BASE_URL: ${TOLLGATE_OLLAMA_BASE_URL:-}
       TOLLGATE_FALLBACK_MODEL: ${TOLLGATE_FALLBACK_MODEL:-}
       TOLLGATE_SHUTDOWN_DELAY: 0s
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
     depends_on:
       postgres: { condition: service_healthy }
 
@@ -51,3 +52,38 @@ services:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       mockupstream: { condition: service_started }
+
+  # --- observability (same configs Kubernetes mounts from deploy/observability) ---
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes: ["./deploy/observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro"]
+    depends_on: [tempo]
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo.yaml"]
+    user: "0" # local only: the named volume is root-owned; k8s uses fsGroup instead
+    volumes:
+      - ./deploy/observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports: ["127.0.0.1:9091:9090"]
+    volumes:
+      - ./deploy/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    ports: ["127.0.0.1:3000:3000"]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true" # local only
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+volumes:
+  tempo-data:

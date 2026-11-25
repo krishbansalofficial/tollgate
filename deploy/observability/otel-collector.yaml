@@ -1,0 +1,40 @@
+# OpenTelemetry Collector: receives spans from Tollgate, tail-samples, ships to Tempo.
+# Used by docker compose and mounted as a ConfigMap in Kubernetes.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+  # Decide per whole trace, after it completes: keep every error and every
+  # slow trace, plus 10% of the rest. This is why the SDK head-samples at 1.0.
+  tail_sampling:
+    decision_wait: 5s
+    policies:
+      - name: errors
+        type: status_code
+        status_code: { status_codes: [ERROR] }
+      - name: slow
+        type: latency
+        latency: { threshold_ms: 2000 }
+      - name: baseline
+        type: probabilistic
+        probabilistic: { sampling_percentage: 10 }
+  batch: {}
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, tail_sampling, batch]
+      exporters: [otlp/tempo]

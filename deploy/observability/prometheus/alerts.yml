@@ -1,0 +1,40 @@
+# Alerting rules. Visible in the Prometheus UI (/alerts) and Grafana.
+# No Alertmanager is deployed (keeps the stack at $0); add one with a
+# receiver (email/Discord webhook) to get notified.
+groups:
+  - name: tollgate
+    rules:
+      - alert: TollgateUsageRowsDropped
+        expr: increase(tollgate_usage_dropped_total[10m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: Usage ledger dropped rows (Postgres slow or down); spend data is incomplete.
+
+      - alert: TollgateHighErrorRate
+        expr: |
+          sum(rate(tollgate_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(tollgate_requests_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: More than 5% of chat requests are failing with 5xx.
+
+      - alert: TollgateBreakerOpen
+        expr: max by (provider) (tollgate_breaker_state) == 1
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "Circuit breaker for {{ $labels.provider }} has been open for 2 minutes."
+
+      - alert: TollgateOverheadP99High
+        expr: histogram_quantile(0.99, sum by (le) (rate(tollgate_overhead_seconds_bucket[5m]))) > 0.010
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: Gateway overhead p99 is above the 10 ms target.
+
+      - alert: TollgateDailySpendHigh
+        expr: sum by (project) (increase(tollgate_cost_usd_total[24h])) > 5
+        labels: { severity: warning }
+        annotations:
+          summary: "Project {{ $labels.project }} spent more than $5 in the last 24h."
