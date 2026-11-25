@@ -7,7 +7,11 @@
 // Fields not listed here are dropped: a documented limitation.
 package api
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 type ChatRequest struct {
 	Model            string          `json:"model"`
@@ -66,12 +70,54 @@ type ErrorBody struct {
 	Code    string `json:"code,omitempty"`
 }
 
-// TextContent returns the message content as a string when it is a plain JSON
-// string, and "" otherwise (content-part arrays).
+// TextContent returns the message text, joining text parts of a content-part
+// array; it returns "" when content holds anything else.
 func (m Message) TextContent() string {
-	var s string
-	if json.Unmarshal(m.Content, &s) != nil {
-		return ""
-	}
+	s, _ := m.Text()
 	return s
+}
+
+// Text returns the message content as plain text. Content is either a JSON
+// string or an array of parts; only "text" parts can be represented as text,
+// so any other part type (images, audio) is an error.
+func (m Message) Text() (string, error) {
+	if len(m.Content) == 0 || string(m.Content) == "null" {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(m.Content, &s); err == nil {
+		return s, nil
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(m.Content, &parts); err != nil {
+		return "", fmt.Errorf("content must be a string or an array of parts")
+	}
+	var b strings.Builder
+	for _, p := range parts {
+		if p.Type != "text" {
+			return "", fmt.Errorf("content part type %q is not supported", p.Type)
+		}
+		b.WriteString(p.Text)
+	}
+	return b.String(), nil
+}
+
+// StringContent encodes s as a JSON string for Message.Content.
+func StringContent(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
+}
+
+// EstimatePromptTokens is a deliberately crude estimate (~4 bytes/token) used
+// only to size the rate-limit reservation, which is reconciled with real
+// usage afterwards. A real tokenizer per model isn't worth hot-path CPU.
+func EstimatePromptTokens(req *ChatRequest) int {
+	n := 0
+	for _, m := range req.Messages {
+		n += len(m.Content)/4 + 4 // +4: per-message role/formatting overhead
+	}
+	return n + len(req.Tools)/4
 }

@@ -85,7 +85,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		Created: time.Now().Unix(),
 		Model:   req.Model,
 		Choices: []api.Choice{{
-			Message:      api.Message{Role: "assistant", Content: jsonString("mock reply to: " + last)},
+			Message:      api.Message{Role: "assistant", Content: api.StringContent("mock reply to: " + last)},
 			FinishReason: "stop",
 		}},
 		Usage: &api.Usage{PromptTokens: prompt, CompletionTokens: completion, TotalTokens: prompt + completion},
@@ -96,9 +96,4 @@ func writeErr(w http.ResponseWriter, status int, typ, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(api.ErrorResponse{Error: api.ErrorBody{Message: msg, Type: typ}})
-}
-
-func jsonString(s string) json.RawMessage {
-	b, _ := json.Marshal(s)
-	return b
 }

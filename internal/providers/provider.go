@@ -39,6 +39,18 @@ func (e *ProviderError) Error() string {
 	return fmt.Sprintf("%s: upstream status %d: %s", e.Provider, e.Status, e.Message)
 }
 
+// ClientFault reports an error caused by the client's own request. Another
+// provider would reject it too, so the router neither retries nor falls back,
+// and the message may be shown to the client. 401/403/402 are deliberately
+// excluded: they describe the gateway's upstream credentials or billing.
+func (e *ProviderError) ClientFault() bool {
+	switch e.Status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		return true
+	}
+	return false
+}
+
 // retryableStatus reports whether retrying the same request could succeed.
 // 4xx other than 408/429 mean the request itself is bad, so a retry (or a
 // different provider) would fail the same way.
