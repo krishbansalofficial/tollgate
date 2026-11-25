@@ -10,3 +10,6 @@ coverage.out
 *.tfvars
 !*.tfvars.example
 .terraform.lock.hcl.bak
+
+# local Claude Code state (agent worktrees)
+.claude/
