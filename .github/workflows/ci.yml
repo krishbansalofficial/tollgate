@@ -3,10 +3,20 @@ name: ci
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "**.md"]
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  # One release at a time per branch: two overlapping runs could bump the
+  # deploy tag out of order.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   lint:
@@ -32,17 +42,100 @@ jobs:
       # The runner has Docker, so testcontainers integration tests run here.
       - run: go test -race -tags integration -count=1 ./...
 
-  image:
+  infra:
     runs-on: ubuntu-latest
-    needs: [lint, test]
     steps:
       - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+      - run: terraform fmt -recursive -check infra/terraform
+      - name: terraform validate
+        run: |
+          for env in infra/terraform/envs/*/; do
+            terraform -chdir="$env" init -backend=false -input=false >/dev/null
+            terraform -chdir="$env" validate
+          done
+      - name: kustomize build
+        run: |
+          for k in $(find deploy -name kustomization.yaml -exec dirname {} \;); do
+            echo "::group::$k"; kubectl kustomize "$k" >/dev/null && echo ok; echo "::endgroup::"
+          done
+
+  # main only: build, scan, publish, then point the deployment at the new image.
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, test, infra]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: tag
+        run: echo "tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
-      # Build only for now; Phase 4 adds multi-arch push to GHCR, Trivy and SBOM.
+
+      # 1. Build amd64 locally and gate on the scan before anything is pushed.
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: tollgate:scan
+          build-args: VERSION=${{ steps.tag.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: trivy (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: tollgate:scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: sbom (SPDX)
+        uses: anchore/sbom-action@v0.24.4
+        with:
+          image: tollgate:scan
+          format: spdx-json
+          output-file: sbom.spdx.json
+          artifact-name: sbom-${{ steps.tag.outputs.tag }}.spdx.json
+
+      # 2. Publish multi-arch. arm64 is cross-compiled (see Dockerfile), and the
+      #    layers above are reused from cache, so this is fast.
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: false
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+          build-args: VERSION=${{ steps.tag.outputs.tag }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+  # GitOps hand-off: commit the new tag; Argo CD notices and rolls it out.
+  # Commits made with GITHUB_TOKEN do not trigger workflows, so no loop.
+  bump:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: set image tag in deploy/tollgate
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          sed -i -E "s/^(    newTag: ).*/\1${TAG}/" deploy/tollgate/kustomization.yaml
+          grep -q "newTag: ${TAG}" deploy/tollgate/kustomization.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "deploy: tollgate ${TAG}"
+          git pull --rebase origin main
+          git push origin HEAD:main

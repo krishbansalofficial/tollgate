@@ -235,6 +235,29 @@ func toEvent(o server.Outcome) usage.Event {
 	return e
 }
 
+// waitForDB pings with capped exponential backoff until Postgres answers.
+// A migration Job's first dial can lose two races: Postgres still starting,
+// and the NetworkPolicy controller (kube-router in k3s) not yet having added
+// the brand-new pod's IP to the allow-list, which REJECTs the connection.
+// Failing fast would just burn the Job's retries on identical races.
+func waitForDB(ctx context.Context, pool *pgxpool.Pool, limit time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	delay := 250 * time.Millisecond
+	for {
+		err := pool.Ping(ctx)
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("database not reachable after %s: %w", limit, err)
+		case <-time.After(delay):
+		}
+		delay = min(2*delay, 5*time.Second)
+	}
+}
+
 // buildProviders enables each provider whose credentials or URL are set. All
 // share one tuned transport per provider (see providers.NewHTTPClient).
 func buildProviders(cfg config.Config) map[string]providers.Provider {
@@ -255,6 +278,9 @@ func buildProviders(cfg config.Config) map[string]providers.Provider {
 }
 
 func migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	if err := waitForDB(ctx, pool, 90*time.Second); err != nil {
+		return err
+	}
 	db := stdlib.OpenDBFromPool(pool)
 	defer func() { _ = db.Close() }()
 	p, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
