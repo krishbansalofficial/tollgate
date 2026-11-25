@@ -54,14 +54,14 @@ func TestKeyCanonical(t *testing.T) {
 		`{"model":"m","temperature":0,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"a","parameters":{}}}]}`,
 		`{"model":"m","temperature":0,"max_tokens":5,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"a","parameters":{}}}]}`,
 	}
-	k := Key(parse(t, base))
+	k := Key("p", parse(t, base))
 	for _, s := range same {
-		if Key(parse(t, s)) != k {
+		if Key("p", parse(t, s)) != k {
 			t.Errorf("should match base: %s", s)
 		}
 	}
 	for _, s := range different {
-		if Key(parse(t, s)) == k {
+		if Key("p", parse(t, s)) == k {
 			t.Errorf("should differ from base: %s", s)
 		}
 	}
@@ -88,5 +88,12 @@ func TestGetSet(t *testing.T) {
 	m.Close()
 	if _, err := c.Get(ctx, "k"); err == nil {
 		t.Fatal("want error with Redis down")
+	}
+}
+
+func TestKeyScopedByProject(t *testing.T) {
+	r := parse(t, `{"model":"m","temperature":0,"messages":[{"role":"user","content":"hi"}]}`)
+	if Key("a", r) == Key("b", r) {
+		t.Fatal("cache key must differ across projects")
 	}
 }

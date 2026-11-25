@@ -23,13 +23,20 @@ func Cacheable(req *api.ChatRequest) bool {
 	return !req.Stream && req.Temperature != nil && *req.Temperature == 0
 }
 
-// Key hashes the fields that determine the output. It is canonical: the
+// Key hashes the fields that determine the output, scoped to a project.
+//
+// Scoping: entries are never shared across projects. A shared cache would
+// let one tenant learn, via X-Tollgate-Cache: HIT or timing, whether any
+// other tenant sent a given prompt (a membership oracle). The hit rate cost
+// is small: cross-project identical prompts are rare.
+//
+// It is canonical: the
 // fields are encoded, decoded into generic values and re-encoded, which
 // sorts every object's keys and normalises whitespace and number formatting
 // (so `{"b":1,"a":2}` and `{"a": 2, "b": 1.0}` inside tools or content parts
 // map to the same key). The "v1" prefix lets a format change invalidate
 // everything at once.
-func Key(req *api.ChatRequest) string {
+func Key(project string, req *api.ChatRequest) string {
 	canon := struct {
 		Model            string          `json:"model"`
 		Messages         []api.Message   `json:"messages"`
@@ -52,7 +59,7 @@ func Key(req *api.ChatRequest) string {
 	_ = json.Unmarshal(b, &generic)
 	b, _ = json.Marshal(generic) // encoding/json sorts map keys
 	sum := sha256.Sum256(b)
-	return "cache:v1:" + hex.EncodeToString(sum[:])
+	return "cache:v1:" + project + ":" + hex.EncodeToString(sum[:])
 }
 
 type Cache struct {

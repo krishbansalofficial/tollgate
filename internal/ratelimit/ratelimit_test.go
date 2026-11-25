@@ -134,3 +134,13 @@ func TestConcurrentAdmissionMiniredis(t *testing.T) {
 	_, rdb := newMini(t)
 	testConcurrentAdmission(t, rdb)
 }
+
+func TestNegativeReservationCannotRefill(t *testing.T) {
+	_, rdb := newMini(t)
+	l := New(rdb, true)
+	ctx := context.Background()
+	_, _ = l.Allow(ctx, "k", 0, 100, 100) // drain
+	if d, _ := l.Allow(ctx, "k", 0, 100, -1_000_000); d.Reserved != 0 || d.RemainingTokens > 0 {
+		t.Fatalf("negative reservation refilled the bucket: %+v", d)
+	}
+}

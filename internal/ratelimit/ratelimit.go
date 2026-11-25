@@ -61,6 +61,9 @@ func tokKey(id string) string { return "rl:{" + id + "}:tok" }
 func (l *Limiter) Allow(ctx context.Context, keyID string, rpm, tpm, tokens int) (Decision, error) {
 	// A reservation larger than the whole bucket could never succeed; cap it
 	// so a huge max_tokens waits for a full bucket instead of failing forever.
+	if tokens < 0 {
+		tokens = 0 // a negative reservation would refill the bucket: never trust the caller here
+	}
 	if tpm > 0 && tokens > tpm {
 		tokens = tpm
 	}

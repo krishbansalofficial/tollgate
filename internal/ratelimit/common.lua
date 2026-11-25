@@ -22,6 +22,7 @@ local function wait_ms(have, need, cap)
 end
 
 local function save(key, tokens, cap)
+  tokens = math.min(cap, tokens) -- never store more than capacity
   redis.call('HSET', key, 'tokens', tokens, 'ts', now)
   -- Expire when the bucket would be full again; then "missing" == "full".
   redis.call('PEXPIRE', key, math.max(1, math.ceil((cap - tokens) * 60000 / cap)))

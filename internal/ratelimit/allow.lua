@@ -6,7 +6,8 @@
 --
 -- All-or-nothing: both buckets are checked before either is written, so a
 -- request denied on tokens doesn't burn a request slot (and vice versa).
-local rcap, tcap, cost = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3])
+local rcap, tcap = tonumber(ARGV[1]), tonumber(ARGV[2])
+local cost = math.max(0, tonumber(ARGV[3])) -- defence in depth: never a negative charge
 local r, tk
 local wait = 0
 if rcap > 0 then
