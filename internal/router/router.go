@@ -5,6 +5,7 @@ package router
 import (
 	"context"
 	"errors"
+	"io"
 	"math"
 	"math/rand/v2"
 	"slices"
@@ -45,11 +46,12 @@ func DefaultConfig() Config {
 
 // Result describes a successful upstream call.
 type Result struct {
-	Resp     *api.ChatResponse
-	Model    string // public name of the model that served it
+	Resp     *api.ChatResponse // non-streaming result
+	Stream   providers.Stream  // streaming result; the caller must Close it
+	Model    string            // public name of the model that served it
 	Provider string
 	Attempts int           // total upstream attempts across all candidates
-	Upstream time.Duration // time spent in upstream calls, including backoff
+	Upstream time.Duration // time spent in upstream calls, including backoff; for streams, until the first chunk
 }
 
 type Router struct {
@@ -140,15 +142,50 @@ func (r *Router) Plan(req *api.ChatRequest) ([]string, error) {
 	return plan, nil
 }
 
-// Chat executes the plan. Error semantics:
+// attemptFunc performs one upstream attempt and stores its output in res.
+type attemptFunc func(ctx context.Context, p providers.Provider, up *api.ChatRequest, res *Result) error
+
+// Chat executes the plan for a non-streaming request.
+func (r *Router) Chat(ctx context.Context, req *api.ChatRequest) (*Result, error) {
+	return r.execute(ctx, req, "router", func(ctx context.Context, p providers.Provider, up *api.ChatRequest, res *Result) error {
+		resp, err := p.Chat(ctx, up)
+		res.Resp = resp
+		return err
+	})
+}
+
+// ChatStream executes the plan for a streaming request. An attempt succeeds
+// once the first chunk arrives: until then nothing has reached the client,
+// so retry and fallback are still safe. After it, the stream is committed
+// and a failure can only end it (the caller reports it in-band).
+func (r *Router) ChatStream(ctx context.Context, req *api.ChatRequest) (*Result, error) {
+	return r.execute(ctx, req, "router.stream", func(ctx context.Context, p providers.Provider, up *api.ChatRequest, res *Result) error {
+		s, err := p.ChatStream(ctx, up)
+		if err != nil {
+			return err
+		}
+		first, err := s.Recv()
+		if err != nil {
+			_ = s.Close()
+			if errors.Is(err, io.EOF) {
+				err = &providers.ProviderError{Provider: p.Name(), Retryable: true, Message: "stream ended before the first chunk"}
+			}
+			return err
+		}
+		res.Stream = &primedStream{Stream: s, first: first}
+		return nil
+	})
+}
+
+// execute runs the plan. Error semantics:
 //   - a client-fault ProviderError (400/404/413/422) returns immediately:
 //     another provider would reject the same request;
 //   - retryable errors retry the same candidate with backoff (budget
 //     permitting), then fall back to the next;
 //   - other errors (e.g. 401 from a misconfigured upstream key) fall back;
 //   - the request's own context ending stops everything.
-func (r *Router) Chat(ctx context.Context, req *api.ChatRequest) (res *Result, err error) {
-	ctx, span := tracer.Start(ctx, "router")
+func (r *Router) execute(ctx context.Context, req *api.ChatRequest, spanName string, attempt attemptFunc) (res *Result, err error) {
+	ctx, span := tracer.Start(ctx, spanName)
 	defer func() {
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
@@ -176,9 +213,9 @@ func (r *Router) Chat(ctx context.Context, req *api.ChatRequest) (res *Result, e
 		br := r.breakers[provName]
 		var retryAfter time.Duration
 
-		for attempt := range r.cfg.MaxAttempts {
-			if attempt > 0 {
-				wait := fullJitter(r.cfg.BaseBackoff, r.cfg.MaxBackoff, attempt)
+		for n := range r.cfg.MaxAttempts {
+			if n > 0 {
+				wait := fullJitter(r.cfg.BaseBackoff, r.cfg.MaxBackoff, n)
 				if retryAfter > wait {
 					wait = retryAfter
 				}
@@ -196,29 +233,46 @@ func (r *Router) Chat(ctx context.Context, req *api.ChatRequest) (res *Result, e
 
 			up := *req // shallow copy; only Model differs
 			up.Model = native
-			actx, cancel := context.WithTimeout(ctx, r.cfg.AttemptTimeout)
+
+			// The attempt timeout bounds the time to a first result, not the
+			// whole call: a stream that started on time may legitimately run
+			// for minutes. So instead of context.WithTimeout (which would kill
+			// the stream later) a timer cancels the attempt only if it fires
+			// before the attempt returns; Stop afterwards disarms it. The
+			// timer callback runs on its own goroutine, hence the atomic flag.
+			actx, cancel := context.WithCancel(ctx)
+			var timedOut atomic.Bool
+			timer := time.AfterFunc(r.cfg.AttemptTimeout, func() { timedOut.Store(true); cancel() })
 			actx, aspan := tracer.Start(actx, "provider.attempt", trace.WithAttributes(
-				attribute.String("tollgate.provider", provName), attribute.String("tollgate.model", model), attribute.Int("tollgate.attempt", attempt)))
+				attribute.String("tollgate.provider", provName), attribute.String("tollgate.model", model), attribute.Int("tollgate.attempt", n)))
 			t0 := time.Now()
-			resp, err := p.Chat(actx, &up)
+			err := attempt(actx, p, &up, res)
+			timer.Stop()
 			elapsed := time.Since(t0)
 			endAttempt(aspan, err)
-			cancel()
 			res.Attempts++
 
 			if err == nil {
+				if res.Stream != nil {
+					// Keep the attempt context alive for the stream's lifetime;
+					// closing the stream releases it.
+					res.Stream = &cancelOnClose{Stream: res.Stream, cancel: cancel}
+				} else {
+					cancel()
+				}
 				br.Record(true)
 				if e := r.latency[model]; e != nil {
 					e.observe(elapsed.Seconds())
 				}
-				res.Resp, res.Model, res.Provider, res.Upstream = resp, model, provName, time.Since(start)
+				res.Model, res.Provider, res.Upstream = model, provName, time.Since(start)
 				return res, nil
 			}
+			cancel()
 			if ctx.Err() != nil { // the request itself is over (client gone / overall deadline)
 				br.Release()
 				return nil, ctx.Err()
 			}
-			if errors.Is(err, context.DeadlineExceeded) { // per-attempt timeout: provider too slow
+			if timedOut.Load() { // per-attempt timeout: provider too slow
 				err = &providers.ProviderError{Provider: provName, Retryable: true, Message: "attempt timed out"}
 			}
 			pe, ok := providers.AsProviderError(err)
@@ -242,6 +296,32 @@ func (r *Router) Chat(ctx context.Context, req *api.ChatRequest) (res *Result, e
 		}
 	}
 	return nil, lastErr
+}
+
+// primedStream replays the chunk the router already read to decide the
+// attempt succeeded, then continues with the underlying stream.
+type primedStream struct {
+	providers.Stream
+	first *api.ChatChunk
+}
+
+func (s *primedStream) Recv() (*api.ChatChunk, error) {
+	if c := s.first; c != nil {
+		s.first = nil
+		return c, nil
+	}
+	return s.Stream.Recv()
+}
+
+type cancelOnClose struct {
+	providers.Stream
+	cancel context.CancelFunc
+}
+
+func (s *cancelOnClose) Close() error {
+	err := s.Stream.Close()
+	s.cancel()
+	return err
 }
 
 func endAttempt(span trace.Span, err error) {

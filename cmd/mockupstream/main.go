@@ -18,6 +18,9 @@ func main() {
 	flag.DurationVar(&cfg.Jitter, "jitter", 0, "uniform extra latency in [0, jitter)")
 	flag.Float64Var(&cfg.ErrorRate, "error-rate", 0, "fraction of requests returning 500")
 	flag.Float64Var(&cfg.RateLimitRate, "429-rate", 0, "fraction of requests returning 429")
+	flag.IntVar(&cfg.StreamChunks, "stream-chunks", 10, "content chunks per streamed reply")
+	flag.DurationVar(&cfg.ChunkDelay, "chunk-delay", 0, "delay before each streamed chunk")
+	flag.IntVar(&cfg.StreamFailAfter, "stream-fail-after", 0, "abort streams after N content chunks (0 = never)")
 	flag.Parse()
 
 	log.Printf("mockupstream listening on %s %+v", *addr, cfg)

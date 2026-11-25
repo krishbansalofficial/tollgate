@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/krishbansalofficial/tollgate/internal/api"
 )
 
 const (
@@ -73,7 +71,13 @@ func errorFrom(provider string, resp *http.Response) *ProviderError {
 		RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		Message:    strings.TrimSpace(string(raw)),
 	}
-	var env api.ErrorResponse
+	// Only error.message is read: providers disagree on the other fields'
+	// types (Gemini's code is a number, OpenAI's a string).
+	var env struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
 	if json.Unmarshal(raw, &env) == nil && env.Error.Message != "" {
 		pe.Message, pe.FromEnvelope = env.Error.Message, true
 	}

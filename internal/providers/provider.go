@@ -15,10 +15,21 @@ import (
 
 // Provider is one upstream LLM API. req.Model is already the provider-native
 // model ID; the router strips the "provider/" prefix before calling.
-// Streaming (ChatStream) is added in Phase 5.
 type Provider interface {
 	Name() string
 	Chat(ctx context.Context, req *api.ChatRequest) (*api.ChatResponse, error)
+	// ChatStream opens a streamed completion. Errors before the stream opens
+	// are returned here; errors after it opens come from Stream.Recv.
+	ChatStream(ctx context.Context, req *api.ChatRequest) (Stream, error)
+}
+
+// Stream yields OpenAI-shaped chunks. Recv returns io.EOF after the last
+// chunk; any other error means the stream broke. Close must always be called
+// and releases the upstream connection. Chunks may carry Usage (typically the
+// last one); callers must not assume a usage chunk arrives.
+type Stream interface {
+	Recv() (*api.ChatChunk, error)
+	Close() error
 }
 
 // ProviderError is every upstream failure, normalised so the router can
