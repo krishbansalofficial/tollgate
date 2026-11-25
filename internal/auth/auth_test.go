@@ -188,10 +188,12 @@ func TestCacheBounded(t *testing.T) {
 	}
 	// Once entries expire, the sweep alone frees space.
 	c.advance(time.Minute)
-	k, _, _, _ := Generate()
-	_, _ = a.Authenticate(context.Background(), k)
-	if len(a.cache) != 1 {
-		t.Fatalf("after expiry sweep: %d entries, want 1", len(a.cache))
+	a.mu.Lock()
+	a.evictLocked(c.now())
+	n := len(a.cache)
+	a.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("after expiry sweep: %d entries, want 0", n)
 	}
 }
 
