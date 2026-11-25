@@ -1,6 +1,6 @@
 # Tollgate: Design
 
-Status: draft v1 (2026-11-24). Written before the core code. Decisions marked **[ADR]** get their own record in `docs/adr/` when they are implemented.
+Status: v2 (2026-11-25). Written before the core code, then updated where the implementation diverged; those places are marked **As built**. Decisions marked **[ADR]** get their own record in `docs/adr/` when they are implemented.
 
 ## 1. Problem and goals
 
@@ -109,7 +109,7 @@ Order rationale: auth first because nothing else should cost anything for an ano
 - Only cacheable when `temperature` is **explicitly** 0. If it is absent, the provider default (usually 1) applies and the output is non-deterministic.
 - Streaming responses are not cached in the MVP. Possible later: replay the cached completion as synthetic SSE chunks.
 - `X-Tollgate-Cache: HIT | MISS | BYPASS` on every response. TTL comes from `TOLLGATE_CACHE_TTL` (default 1 h). A cache read error is treated as a miss and never fails the request.
-- The cache is per model and shared across projects. Identical prompts give identical answers, and nothing project-specific goes into the key. Hit cost savings are recorded in the ledger as `cost_saved`.
+- **As built:** the cache key is scoped per project (`cache:v1:<project>:<hash>`). A shared cache would let one tenant learn, from `X-Tollgate-Cache: HIT` or response timing, whether another tenant had sent a given prompt. Cross-project identical prompts are rare, so the hit-rate cost is small. Hits get a fresh `id`/`created`, so cached bodies can't be correlated. Hit cost savings are recorded in the ledger as `cost_saved`.
 
 ### 3.5 Providers (`internal/providers`)
 
@@ -127,7 +127,7 @@ type Stream interface {
 
 - The internal canonical types (`internal/api`) **are** the OpenAI schema. Each adapter translates to and from its native API at the boundary.
 - `openaicompat` adapter: Groq and Ollama both speak the OpenAI API, so one adapter with a different base URL covers both.
-- `anthropic` adapter: Messages API. The system prompt is a top-level field, content is a list of blocks, `max_tokens` is required, and the SSE events are typed (`message_start`, `content_block_delta`, `message_delta`).
+- `anthropic` adapter: Messages API. The system prompt is a top-level field, content is a list of blocks, `max_tokens` is required, and the SSE events are typed (`message_start`, `content_block_delta`, `message_delta`). **As built:** it pins `anthropic-version: 2026-10-21`, which rejects `temperature`/`top_p`/`top_k` on every model, so sampling parameters are not forwarded (a documented limitation).
 - `gemini` adapter: native `generateContent` / `streamGenerateContent`. The role is `model` rather than `assistant`, and messages go in `contents[].parts[]`.
 - All errors are normalised to `*ProviderError{Provider, Status, Retryable, RetryAfter}`. Retryable means 408, 429, 5xx, timeouts, and connection resets.
 - Transport: raw `net/http` with one tuned shared `http.Transport` per provider (keep-alives, `MaxIdleConnsPerHost`), rather than vendor SDKs. **[ADR, decision pending: see §9]**
@@ -136,7 +136,7 @@ type Stream interface {
 ### 3.6 Router (`internal/router`)
 
 - **Model catalog** (YAML, loaded at startup): each entry maps a public model name to a provider, the native model ID, and the price per 1M input/output tokens. Aliases group equivalent models:
-  - Pinned: `groq/llama-3.3-70b-versatile` goes to exactly that provider, with no fallback unless `fallback: true`.
+  - Pinned: `groq/llama-3.3-70b-versatile` goes to exactly that provider, plus the global fallback model if configured. **As built:** a pinned model must be in the catalog. An unpriced model would be served at a recorded cost of $0 and bypass spend tracking, so unknown models fail closed with 404.
   - Policy aliases: `tollgate/cheapest` and `tollgate/fastest` each hold a candidate list sorted per request.
 - **cheapest**: sort candidates by estimated cost (prompt estimate × input price + max_tokens × output price).
 - **fastest**: sort by an EWMA of observed latency (TTFT for streams, total for non-stream) per provider and model, α = 0.2. Each update is an atomic load and compare-and-swap on a `uint64` holding float bits, so there is no lock on the hot path.
@@ -147,7 +147,7 @@ type Stream interface {
   - Open → Half-open after a cooldown of 15 s, doubling up to 2 min while failures continue.
   - Half-open admits one probe. Success closes the breaker; failure re-opens it.
   - An open breaker makes the router skip that provider instantly, without waiting for a timeout.
-  - 429s count toward the breaker only for the gateway's shared provider key. They are quota exhaustion, not a client error.
+  - 429s count toward the breaker: with the gateway's shared provider key they mean quota exhaustion. **As built:** client-fault responses (400/404/413/422) are neutral. They neither count as success nor close a half-open breaker, so bad requests can't mask a failing provider. Gemini's 400 for an invalid API key is reclassified as 401 so it fails over.
 - **Fallback**: on a non-retryable error, or once retries are exhausted, move to the next candidate. Ollama is always appended last when `TOLLGATE_OLLAMA_FALLBACK=true`. 4xx errors that are the client's fault (400 invalid request, 413) are returned immediately with no fallback, because another provider would reject them too.
 
 ### 3.7 Streaming
@@ -171,7 +171,7 @@ type Stream interface {
 
 ### 3.9 Observability (`internal/telemetry`)
 
-- **Traces**: OTel SDK with an OTLP/gRPC exporter to the collector. Spans: `gateway.request` (root), `auth`, `ratelimit`, `cache.get`/`cache.set`, `router`, one `provider.attempt` per try (attributes: provider, model, attempt, status, retryable), and `stream.first_token` as an event. Parent-based sampling at 10% by default, plus a tail-sampling policy in the collector that keeps all errors.
+- **Traces**: OTel SDK with an OTLP/gRPC exporter to the collector. Spans: `gateway.request` (root), `auth`, `ratelimit`, `cache.get`/`cache.set`, `router`, one `provider.attempt` per try (attributes: provider, model, attempt, status, retryable), and `stream.first_token` as an event. **As built:** the SDK head-samples at 1.0, and the collector's tail sampling keeps every error trace, every trace over 2 s, and 10% of the rest. Head sampling below 1.0 would drop error traces before the collector saw them.
 - **Metrics**: `prometheus/client_golang` directly rather than OTel metrics through the collector. It has fewer moving parts and native histograms. **[ADR]**
   - `tollgate_requests_total{route,status,provider,cache}`
   - `tollgate_provider_errors_total{provider,class}`

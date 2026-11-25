@@ -1,0 +1,20 @@
+# Overlay for chaos tests (loadtest/chaos.sh). Adds a second mock upstream
+# wired in as the "ollama" provider, which is the configured last-resort
+# fallback, so a failing primary can be observed failing over.
+#   docker compose -p tollgate-chaos -f compose.yaml -f loadtest/compose.chaos.yaml up -d --build
+services:
+  mockupstream:
+    # Primary: arguments are swapped per scenario by chaos.sh.
+    command: ["-addr", ":8081", "-latency", "20ms", "-stream-chunks", "20", "-chunk-delay", "400ms"]
+  mockbackup:
+    build: .
+    entrypoint: ["/usr/local/bin/mockupstream"]
+    command: ["-addr", ":8081", "-latency", "20ms"]
+  tollgate:
+    environment:
+      TOLLGATE_OLLAMA_BASE_URL: http://mockbackup:8081/v1
+      TOLLGATE_FALLBACK_MODEL: ollama/llama3.2:3b
+      TOLLGATE_RATELIMIT_FAIL_MODE: ${FAIL_MODE:-open}
+      TOLLGATE_SHUTDOWN_DELAY: 2s
+    depends_on:
+      mockbackup: { condition: service_started }

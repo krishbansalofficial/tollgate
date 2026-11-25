@@ -1,0 +1,10 @@
+# Overlay for load tests: fixed mock latency (no jitter) so k6 latency minus
+# 50 ms isolates gateway overhead, and pprof on a host-loopback-only port.
+#   docker compose -p tollgate-lt -f compose.yaml -f loadtest/compose.loadtest.yaml up -d --build
+services:
+  mockupstream:
+    command: ["-addr", ":8081", "-latency", "50ms", "-stream-chunks", "20", "-chunk-delay", "5ms"]
+  tollgate:
+    environment:
+      TOLLGATE_PPROF_ADDR: ":6060"
+    ports: ["127.0.0.1:6060:6060"]
