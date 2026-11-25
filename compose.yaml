@@ -1,0 +1,39 @@
+# Local dev: `docker compose up --build`, then create a key:
+#   docker compose run --rm tollgate keys create --project dev
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: tollgate
+      POSTGRES_PASSWORD: tollgate # local only; real secrets are SealedSecrets in deploy/
+      POSTGRES_DB: tollgate
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "tollgate"]
+      interval: 2s
+      retries: 15
+
+  mockupstream:
+    build: .
+    entrypoint: ["/usr/local/bin/mockupstream"]
+    command: ["-addr", ":8081", "-latency", "50ms", "-jitter", "20ms"]
+
+  migrate:
+    build: .
+    command: ["migrate"]
+    environment: &env
+      TOLLGATE_DATABASE_URL: postgres://tollgate:tollgate@postgres:5432/tollgate?sslmode=disable
+      TOLLGATE_MOCK_BASE_URL: http://mockupstream:8081/v1
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      TOLLGATE_SHUTDOWN_DELAY: 0s
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  tollgate:
+    build: .
+    command: ["serve"]
+    environment: *env
+    ports: ["8080:8080"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      mockupstream: { condition: service_started }
