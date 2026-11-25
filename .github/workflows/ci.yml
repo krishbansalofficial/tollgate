@@ -43,24 +43,29 @@ jobs:
       - run: go test -race -tags integration -count=1 ./...
 
   infra:
+    # terraform init downloads providers and kustomize fetches remote bases,
+    # so PR-controlled IaC only runs for branches of this repo, not forks.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: hashicorp/setup-terraform@v4
       - run: terraform fmt -recursive -check infra/terraform
       - name: terraform validate
         run: |
-          for env in infra/terraform/envs/*/; do
-            terraform -chdir="$env" init -backend=false -input=false >/dev/null
-            terraform -chdir="$env" validate
+          for env in oracle hetzner; do
+            terraform -chdir="infra/terraform/envs/$env" init -backend=false -input=false -lockfile=readonly >/dev/null
+            terraform -chdir="infra/terraform/envs/$env" validate
           done
       - name: kustomize build
         run: |
-          for k in $(find deploy -name kustomization.yaml -exec dirname {} \;); do
+          for k in deploy/tollgate deploy/observability deploy/platform/issuers deploy/platform/sealed-secrets deploy/platform/cert-manager; do
             echo "::group::$k"; kubectl kustomize "$k" >/dev/null && echo ok; echo "::endgroup::"
           done
 
-  # main only: build, scan, publish, then point the deployment at the new image.
+  # main only: build once, scan exactly what was published, deploy by digest.
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [lint, test, infra]
@@ -70,45 +75,25 @@ jobs:
       packages: write
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - id: tag
         run: echo "tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
-
-      # 1. Build amd64 locally and gate on the scan before anything is pushed.
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64
-          load: true
-          tags: tollgate:scan
-          build-args: VERSION=${{ steps.tag.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: trivy (fail on fixable HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: tollgate:scan
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-      - name: sbom (SPDX)
-        uses: anchore/sbom-action@v0.24.4
-        with:
-          image: tollgate:scan
-          format: spdx-json
-          output-file: sbom.spdx.json
-          artifact-name: sbom-${{ steps.tag.outputs.tag }}.spdx.json
-
-      # 2. Publish multi-arch. arm64 is cross-compiled (see Dockerfile), and the
-      #    layers above are reused from cache, so this is fast.
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v7
+
+      # Build both architectures once (arm64 is cross-compiled, see Dockerfile)
+      # and push under the commit tag. Nothing runs this image until the bump
+      # job pins its digest, and that only happens after the scans pass.
+      - id: build
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -116,11 +101,47 @@ jobs:
           tags: ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
           build-args: VERSION=${{ steps.tag.outputs.tag }}
           cache-from: type=gha
+          cache-to: type=gha,mode=max
           provenance: mode=max
           sbom: true
 
-  # GitOps hand-off: commit the new tag; Argo CD notices and rolls it out.
-  # Commits made with GITHUB_TOKEN do not trigger workflows, so no loop.
+      # Scan the published digest, per architecture: the same bytes that run.
+      - name: trivy linux/arm64 (the production node)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: trivy linux/amd64
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          TRIVY_PLATFORM: linux/amd64
+          TRIVY_SKIP_DB_UPDATE: "true" # the previous step downloaded it
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: sbom (SPDX) of the published digest
+        uses: anchore/sbom-action@v0.24.4
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          artifact-name: sbom-${{ steps.tag.outputs.tag }}.spdx.json
+
+  # GitOps hand-off: pin the scanned digest in deploy/tollgate; Argo CD rolls
+  # it out. A digest is immutable, so the tag can't be re-pointed afterwards.
+  # Commits made with GITHUB_TOKEN don't trigger workflows, so no loop.
   bump:
     needs: release
     runs-on: ubuntu-latest
@@ -128,14 +149,26 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - name: set image tag in deploy/tollgate
+        with:
+          persist-credentials: false # the token is used only by the push below
+      - name: pin image digest in deploy/tollgate
         env:
           TAG: ${{ needs.release.outputs.tag }}
+          DIGEST: ${{ needs.release.outputs.digest }}
         run: |
-          sed -i -E "s/^(    newTag: ).*/\1${TAG}/" deploy/tollgate/kustomization.yaml
-          grep -q "newTag: ${TAG}" deploy/tollgate/kustomization.yaml
+          [[ $TAG =~ ^sha-[0-9a-f]{12}$ && $DIGEST =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "bad tag/digest"; exit 1; }
+          f=deploy/tollgate/kustomization.yaml
+          sed -i -E "/^    digest: /d; s/^(    newTag: ).*/\1${TAG}\n    digest: ${DIGEST}/" "$f"
+          grep -q "digest: ${DIGEST}" "$f"
+      - name: commit and push (only the expected change)
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "deploy: tollgate ${TAG}"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          git pull --rebase "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
+          changed=$(git diff --name-only HEAD~1 HEAD)
+          [[ $changed == "deploy/tollgate/kustomization.yaml" ]] || { echo "unexpected change set: $changed"; exit 1; }
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main

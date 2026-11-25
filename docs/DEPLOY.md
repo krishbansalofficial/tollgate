@@ -5,13 +5,13 @@ Target: a single-node k3s cluster on Oracle Cloud Always Free (ARM64, 2 OCPU / 1
 ```mermaid
 flowchart LR
     dev[git push main] --> ci[GitHub Actions<br/>lint · test -race · tf validate]
-    ci --> rel[build · Trivy · SBOM<br/>push ghcr.io sha-…]
-    rel --> bump[commit newTag<br/>deploy/tollgate]
+    ci --> rel[build+push once<br/>Trivy + SBOM on the digest]
+    rel --> bump[pin digest<br/>deploy/tollgate]
     bump --> argo[Argo CD on k3s<br/>watches deploy/]
     argo --> k3s[(Oracle A1 VM)]
 ```
 
-After the one-time setup below, **every merge to `main` deploys itself**: CI publishes `ghcr.io/krishbansalofficial/tollgate:sha-<commit>`, commits the tag to `deploy/tollgate/kustomization.yaml`, and Argo CD syncs it. A PreSync Job runs migrations first.
+After the one-time setup below, **every merge to `main` deploys itself**. CI builds the multi-arch image once and pushes `ghcr.io/krishbansalofficial/tollgate:sha-<commit>`. Trivy and the SBOM then run against that exact published digest, for both architectures. Only then does CI pin the digest in `deploy/tollgate/kustomization.yaml`, and Argo CD syncs it. A PreSync Job runs migrations first.
 
 ## What runs on the node
 
