@@ -17,7 +17,7 @@ resources:
 # the commit and rolls it out. Do not edit by hand.
 images:
   - name: ghcr.io/krishbansalofficial/tollgate
-    newTag: dev
+    newTag: sha-dd4999a4d036
 
 configMapGenerator:
   - name: tollgate-config
