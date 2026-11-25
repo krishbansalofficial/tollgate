@@ -1,5 +1,7 @@
 # Tollgate: Phased plan
 
+**Status (2026-11-25):** Phases 1–6 complete, except the live Oracle deploy (Phase 4 exit), which needs an Oracle account; everything up to `terraform apply` is built and validated. See README.md.
+
 Every phase ends with: tests green (`go test -race ./...`), lint clean, the docs it touched updated, and a commit per meaningful step. Estimates assume ~3 focused hours per day.
 
 ## Phase 1: Skeleton, one provider, keys, CI (≈ 3–4 days)
