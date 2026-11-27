@@ -101,3 +101,7 @@ spec:
           - path: /v1
             pathType: Prefix
             backend: { service: { name: tollgate, port: { name: http } } }
+          # Liveness only, for uptime monitors; /readyz stays cluster-internal.
+          - path: /healthz
+            pathType: Exact
+            backend: { service: { name: tollgate, port: { name: http } } }
