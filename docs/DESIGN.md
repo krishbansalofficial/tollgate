@@ -201,7 +201,7 @@ usage_events (id bigserial, ts timestamptz, request_id text, project_id, key_id,
               -- index (project_id, ts); BRIN on ts
 ```
 
-Migrations use goose with embedded SQL files, run by a `tollgate migrate` subcommand (a k8s Job / Argo CD PreSync hook). They are not run on every pod start, which would race with multiple replicas.
+Migrations use goose with embedded SQL files, run by a `tollgate migrate` subcommand (a k8s Job run as an Argo CD Sync hook in wave 1, after the secret and Postgres in wave 0 and before the Deployment in wave 2; a PreSync hook deadlocks the first deploy because it runs before the secret exists). They are not run on every pod start, which would race with multiple replicas.
 
 Key management for the MVP is a CLI: `tollgate keys create --project X` prints the raw key **once**.
 

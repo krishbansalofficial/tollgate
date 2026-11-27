@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: tollgate
   labels: { app.kubernetes.io/name: tollgate, app.kubernetes.io/component: api }
+  annotations:
+    argocd.argoproj.io/sync-wave: "2" # after the migrate job (wave 1)
 spec:
   replicas: 2 # rate limits stay globally consistent: all state is in Redis
   revisionHistoryLimit: 3

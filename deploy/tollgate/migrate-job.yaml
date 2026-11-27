@@ -1,12 +1,16 @@
-# Runs `tollgate migrate` before every sync (Argo CD PreSync hook), so the
-# schema is updated exactly once per rollout, before new pods start, rather
-# than racing from every pod's startup.
+# Runs `tollgate migrate` once per sync, before new pods start, rather than
+# racing from every pod's startup. It is a Sync hook in wave 1, not PreSync:
+# PreSync runs before any normal resource is applied, so on a first deploy
+# the SealedSecret and Postgres (wave 0) would not exist yet and the job
+# would wait forever. Argo CD waits for wave 0 to be healthy, runs this job
+# to completion, then applies the Deployment (wave 2).
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: tollgate-migrate
   annotations:
-    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "1"
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   backoffLimit: 3
