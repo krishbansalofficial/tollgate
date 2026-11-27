@@ -43,3 +43,17 @@ spec:
   ingress:
     - from: [{ podSelector: { matchLabels: { app.kubernetes.io/name: tollgate, app.kubernetes.io/component: api } } }]
       ports: [{ port: 6379 }]
+---
+# cert-manager's HTTP-01 solver pods run in this namespace for a minute while
+# Let's Encrypt validates the domain. Without this, default-deny blocks
+# Traefik from reaching them and issuance stalls on a 502.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: acme-http01-solver
+spec:
+  podSelector:
+    matchLabels: { acme.cert-manager.io/http01-solver: "true" }
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ port: 8089 }]
