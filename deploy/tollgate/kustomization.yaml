@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: tollgate
 
 resources:
+  - sealed-secrets.yaml
   - namespace.yaml
   - tollgate.yaml
   - migrate-job.yaml

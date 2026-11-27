@@ -5,6 +5,7 @@ kind: Kustomization
 namespace: observability
 
 resources:
+  - sealed-secrets.yaml
   - k8s/namespace.yaml
   - k8s/otel-collector.yaml
   - k8s/tempo.yaml

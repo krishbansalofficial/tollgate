@@ -1,0 +1,9 @@
+# Default gitleaks rules, minus SealedSecret files: their values are RSA/AES
+# ciphertext that only the in-cluster controller can decrypt, and the
+# generic-api-key rule flags them by field name (e.g. groq-api-key: <blob>).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "SealedSecret ciphertext"
+paths = ['''(^|/)sealed-secrets\.yaml$''']
