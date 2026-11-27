@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"math/rand/v2"
+	"net/http"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -279,6 +280,14 @@ func (r *Router) execute(ctx context.Context, req *api.ChatRequest, spanName str
 			if !ok {
 				br.Release()
 				return nil, err // not an upstream failure (e.g. encoding bug): don't mask it
+			}
+			if pe.Status == http.StatusNotFound {
+				// Stale catalog entry: this provider no longer serves this model id.
+				// Skip to the next model, but stay neutral for the breaker: it is
+				// per provider, and the provider's other models are fine.
+				br.Release()
+				lastErr = err
+				break
 			}
 			if pe.ClientFault() {
 				// Neutral for the breaker: neither health nor failure. Counting it

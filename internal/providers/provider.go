@@ -75,9 +75,12 @@ func (e *ProviderError) ClientMessage() (string, bool) {
 // provider would reject it too, so the router neither retries nor falls back,
 // and the message may be shown to the client. 401/403/402 are deliberately
 // excluded: they describe the gateway's upstream credentials or billing.
+// So is 404: only catalog models are routed, so an upstream 404 means the
+// catalog's model id is stale for that provider (the gateway's fault), and
+// the router should move on to the next model.
 func (e *ProviderError) ClientFault() bool {
 	switch e.Status {
-	case http.StatusBadRequest, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
 		return true
 	}
 	return false

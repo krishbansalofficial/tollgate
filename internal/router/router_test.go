@@ -137,6 +137,26 @@ func TestChatClientFaultNoFallback(t *testing.T) {
 	}
 }
 
+// An upstream 404 for a catalog model means the catalog is stale for that
+// provider: move to the next model, and leave the provider's breaker alone.
+func TestChatStaleModel404FallsBackAndKeepsBreakerClosed(t *testing.T) {
+	a := &scripted{name: "a", errs: []error{perr(404), perr(404), perr(404), perr(404), perr(404), perr(404)}}
+	b := &scripted{name: "b"}
+	r := newRouter(Config{MaxAttempts: 3, AttemptTimeout: time.Second, Fallback: "b/small"}, a, b)
+	for range 6 {
+		res, err := r.Chat(context.Background(), req("a/big"))
+		if err != nil || res.Model != "b/small" {
+			t.Fatalf("res=%+v err=%v", res, err)
+		}
+	}
+	if a.calls.Load() != 6 { // one attempt per request: a 404 is not retried on the same model
+		t.Fatalf("a.calls=%d, want 6", a.calls.Load())
+	}
+	if s := r.BreakerState("a"); s != Closed {
+		t.Fatalf("breaker = %v, want closed", s)
+	}
+}
+
 func TestChatLongRetryAfterSkipsToFallback(t *testing.T) {
 	a := &scripted{name: "a", errs: []error{&providers.ProviderError{Status: 429, Retryable: true, RetryAfter: time.Minute}}}
 	b := &scripted{name: "b"}

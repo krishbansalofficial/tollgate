@@ -48,7 +48,7 @@ func TestOllamaFallbackWiring(t *testing.T) {
 	rcfg.Fallback, rcfg.AttemptTimeout, rcfg.MaxAttempts = cfg.FallbackModel, 5*time.Second, 1
 	rt := router.New(rcfg, cat, provs, nil)
 
-	req := &api.ChatRequest{Model: "groq/llama-3.1-8b-instant", Messages: []api.Message{{Role: "user", Content: api.StringContent("hi")}}}
+	req := &api.ChatRequest{Model: "groq/openai/gpt-oss-20b", Messages: []api.Message{{Role: "user", Content: api.StringContent("hi")}}}
 	res, err := rt.Chat(context.Background(), req)
 	if err != nil || res.Model != "ollama/llama3.2:3b" || res.Provider != "ollama" || ollama.Requests() != 1 {
 		t.Fatalf("res=%+v err=%v ollama requests=%d", res, err, ollama.Requests())

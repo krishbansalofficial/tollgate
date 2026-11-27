@@ -136,7 +136,7 @@ type Stream interface {
 ### 3.6 Router (`internal/router`)
 
 - **Model catalog** (YAML, loaded at startup): each entry maps a public model name to a provider, the native model ID, and the price per 1M input/output tokens. Aliases group equivalent models:
-  - Pinned: `groq/llama-3.3-70b-versatile` goes to exactly that provider, plus the global fallback model if configured. **As built:** a pinned model must be in the catalog. An unpriced model would be served at a recorded cost of $0 and bypass spend tracking, so unknown models fail closed with 404.
+  - Pinned: `groq/openai/gpt-oss-120b` goes to exactly that provider, plus the global fallback model if configured. **As built:** a pinned model must be in the catalog. An unpriced model would be served at a recorded cost of $0 and bypass spend tracking, so unknown models fail closed with 404.
   - Policy aliases: `tollgate/cheapest` and `tollgate/fastest` each hold a candidate list sorted per request.
 - **cheapest**: sort candidates by estimated cost (prompt estimate × input price + max_tokens × output price).
 - **fastest**: sort by an EWMA of observed latency (TTFT for streams, total for non-stream) per provider and model, α = 0.2. Each update is an atomic load and compare-and-swap on a `uint64` holding float bits, so there is no lock on the hot path.
