@@ -179,7 +179,12 @@ jobs:
           [[ $changed == "deploy/tollgate/kustomization.yaml" ]] || { echo "unexpected change set: $changed"; exit 1; }
           # Forward only: a slow older run must not roll the cluster back.
           # deploy^ is the source commit the current deploy was built from.
-          old=$(git ls-remote "$remote" refs/heads/deploy | cut -f1)
+          # Fail closed: an unreadable remote must stop the job, not skip the
+          # check. (An empty $old also makes --force-with-lease demand that
+          # deploy not exist, so a skipped lookup could never overwrite it.)
+          refs=$(git ls-remote --exit-code "$remote" refs/heads/deploy) || rc=$?
+          if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 2 ]]; then echo "cannot read deploy ref (rc=$rc)"; exit 1; fi
+          old=$(cut -f1 <<<"$refs")
           if [[ -n $old ]]; then
             git fetch -q "$remote" "$old"
             if ! git merge-base --is-ancestor "$old^" "$GITHUB_SHA"; then
