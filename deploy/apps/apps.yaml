@@ -65,6 +65,26 @@ spec:
   syncPolicy:
     automated: { prune: true, selfHeal: true }
 ---
+# The gateway's SealedSecret, tracking main (not the deploy branch) so key
+# rotations don't wait for an image build. Wave 0: on a fresh cluster the
+# secret must exist before the gateway app's migration Job (wave 1) runs.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tollgate-secrets
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "0" }
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/krishbansalofficial/tollgate.git
+    targetRevision: main
+    path: deploy/tollgate-secrets
+  destination: { server: https://kubernetes.default.svc, namespace: tollgate }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]
+---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

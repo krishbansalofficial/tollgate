@@ -17,7 +17,7 @@ set -euo pipefail
 
 TARGET=${1:?usage: seal-secrets.sh <ssh-target>}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-APP_OUT=$ROOT/deploy/tollgate/sealed-secrets.yaml
+APP_OUT=$ROOT/deploy/tollgate-secrets/sealed-secrets.yaml
 OBS_OUT=$ROOT/deploy/observability/sealed-secrets.yaml
 
 rotate=0
@@ -97,7 +97,7 @@ mv "$APP_OUT.tmp" "$APP_OUT"
 [[ -e $OBS_OUT.tmp ]] && mv "$OBS_OUT.tmp" "$OBS_OUT"
 
 # Reference the files from their kustomizations (idempotent).
-for k in "$ROOT/deploy/tollgate/kustomization.yaml" "$ROOT/deploy/observability/kustomization.yaml"; do
+for k in "$ROOT/deploy/tollgate-secrets/kustomization.yaml" "$ROOT/deploy/observability/kustomization.yaml"; do
   grep -q '^  - sealed-secrets.yaml' "$k" || sed -i 's/^resources:$/resources:\n  - sealed-secrets.yaml/' "$k"
 done
 

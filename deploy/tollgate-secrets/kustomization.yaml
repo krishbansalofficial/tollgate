@@ -1,0 +1,15 @@
+# The gateway's SealedSecret, in its own Argo CD app that tracks main
+# directly: a key rotation reaches the cluster in ~3 minutes instead of
+# waiting behind the image pipeline (the gateway app tracks the CI-owned
+# deploy branch). Written by scripts/seal-secrets.sh; ciphertext only.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tollgate
+
+resources:
+  - sealed-secrets.yaml
+
+# Never let Argo CD prune it: deleting a SealedSecret deletes the decrypted
+# Secret, and the gateway, Postgres and the migration Job all read it.
+commonAnnotations:
+  argocd.argoproj.io/sync-options: Prune=false

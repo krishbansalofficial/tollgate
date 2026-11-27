@@ -61,7 +61,7 @@ jobs:
           done
       - name: kustomize build
         run: |
-          for k in deploy/tollgate deploy/observability deploy/platform/issuers deploy/platform/sealed-secrets deploy/platform/cert-manager; do
+          for k in deploy/tollgate deploy/tollgate-secrets deploy/observability deploy/platform/issuers deploy/platform/sealed-secrets deploy/platform/cert-manager; do
             echo "::group::$k"; kubectl kustomize "$k" >/dev/null && echo ok; echo "::endgroup::"
           done
 

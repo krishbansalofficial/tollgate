@@ -3,16 +3,15 @@ kind: Kustomization
 namespace: tollgate
 
 resources:
-  - sealed-secrets.yaml
   - namespace.yaml
   - tollgate.yaml
   - migrate-job.yaml
   - postgres.yaml
   - redis.yaml
   - networkpolicy.yaml
-  # Secrets: generated per cluster by scripts/seal-secrets.sh, which encrypts
-  # them with this cluster's sealed-secrets key and adds the file here.
-  # See secrets.example.yaml for the keys it must contain.
+  # Secrets live in deploy/tollgate-secrets (its own Argo CD app tracking
+  # main), so key rotations skip the image pipeline. See secrets.example.yaml
+  # for the keys it must contain.
 
 # On main this pin is only a placeholder. CI writes the real tag and digest
 # on the bot-owned `deploy` branch (the built commit + one pin commit), which

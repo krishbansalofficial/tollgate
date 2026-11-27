@@ -78,9 +78,13 @@ git add deploy/*/sealed-secrets.yaml deploy/*/kustomization.yaml
 git commit -m "deploy: sealed secrets" && git push
 ```
 
-The script prompts with hidden input for provider keys, a GitHub token with `read:packages` (for pulling the private image), and a Grafana password. It generates a random Postgres password and encrypts everything with the cluster's public key.
+The script prompts with hidden input for provider keys and a Grafana password, rejects keys with the wrong prefix or stray whitespace, generates a random Postgres password, and encrypts everything with the cluster's public key. Only the encrypted files are committed: plaintext never touches disk or git.
 
-Only the encrypted files are committed: plaintext never touches disk or git. The script refuses to overwrite existing secrets, because a new Postgres password would lock the app out of the existing database. Use `FORCE=1` only for a fresh database.
+**Rotating a key:** run the same script again. Paste only the keys you're changing; Enter keeps the current value, read from the cluster over ssh and never printed. The Postgres password is always kept, because the existing database still uses it (`FORCE=1` mints a new one, for a fresh database only). The gateway's secret lives in `deploy/tollgate-secrets`, its own Argo CD app tracking `main`, so a rotation lands in about 3 minutes without waiting for an image build. Pods read keys at startup, so finish with:
+
+```bash
+ssh ubuntu@<ip> sudo k3s kubectl -n tollgate rollout restart deploy/tollgate
+```
 
 ### 7. First key and smoke test
 
