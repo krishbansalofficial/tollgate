@@ -5,7 +5,7 @@
 [![ci](https://github.com/krishbansalofficial/tollgate/actions/workflows/ci.yml/badge.svg)](https://github.com/krishbansalofficial/tollgate/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/go-1.27-00ADD8)
 ![deploy](https://img.shields.io/badge/deploy-k3s%20%2B%20Argo%20CD-EF7B4D)
-![cost](https://img.shields.io/badge/hosting-%240%2Fmonth-brightgreen)
+![cost](https://img.shields.io/badge/hosting-%240%20(student%20credit)-brightgreen)
 
 Point any OpenAI SDK at it by changing `base_url`:
 
@@ -50,7 +50,7 @@ More detail: [docs/DESIGN.md](docs/DESIGN.md) · [ADRs](docs/adr/README.md).
 
 ## Real traffic
 
-> **TODO:** not yet live. This section will list the apps routed through Tollgate, requests and tokens served, cost saved by the cache, and a Grafana screenshot, once the Oracle deployment ([docs/DEPLOY.md](docs/DEPLOY.md)) is carrying real traffic. No numbers are shown until they exist.
+> **TODO:** not yet live. This section will list the apps routed through Tollgate, requests and tokens served, cost saved by the cache, and a Grafana screenshot, once the deployment ([docs/DEPLOY.md](docs/DEPLOY.md)) is carrying real traffic. No numbers are shown until they exist.
 
 ## Performance
 
@@ -147,10 +147,16 @@ Tests:
 
 ## Deploy
 
-Single-node k3s on **Oracle Cloud Always Free** (ARM64, 2 OCPU / 12 GB, ~$0/month), managed by **Argo CD**:
+Single-node k3s managed by **Argo CD**. One cloud-agnostic cloud-init module turns any Ubuntu 24.04 VM into the node, so the host is a small per-cloud Terraform env:
 
-1. `terraform apply` in `infra/terraform/envs/oracle`. The node module refuses to exceed the free-tier caps.
-2. `infra/bootstrap.sh ubuntu@<ip> <deploy-key>` installs Argo CD and points it at `deploy/`.
+| env | VM | cost |
+|---|---|---|
+| `azure` (current) | Standard_B2pls_v2, ARM64, 2 vCPU / 4 GB | $0: Azure for Students credit (~$25/month of it) |
+| `oracle` | A1 Flex, ARM64, 2 OCPU / 12 GB | $0: Always Free; validation refuses to exceed the caps |
+| `hetzner` | CAX11, ARM64, 2 vCPU / 4 GB | ~€4/month |
+
+1. `terraform apply` in `infra/terraform/envs/<env>`.
+2. `infra/bootstrap.sh ubuntu@<ip>` installs Argo CD and points it at `deploy/` (public repo, so no credentials).
 3. `scripts/seal-secrets.sh ubuntu@<ip>` encrypts secrets with Sealed Secrets; commit the output.
 4. From then on, **every merge to main deploys itself**:
    1. CI runs lint, `go test -race`, Terraform validate and kustomize build.
@@ -158,12 +164,12 @@ Single-node k3s on **Oracle Cloud Always Free** (ARM64, 2 OCPU / 12 GB, ~$0/mont
    3. Trivy and the SBOM run on that exact digest.
    4. CI pins the digest in `deploy/`, and Argo CD rolls it out.
 
-Full runbook, including the Hetzner fallback and Ollama over Tailscale: [docs/DEPLOY.md](docs/DEPLOY.md).
+Full runbook for each env, plus Ollama over Tailscale: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Limitations and roadmap
 
 **Known limitations:**
-- **Not live yet:** the Oracle deployment needs an account, so the "Real traffic" section is empty.
+- **Not live yet:** the "Real traffic" section stays empty until real apps route through it.
 - **Anthropic sampling:** temperature and top_p are not forwarded. API version 2026-10-21 rejects them.
 - **Tools:** tool calling is passed through only to OpenAI-compatible providers; the Anthropic and Gemini adapters reject tools.
 - **Streaming and cache:** streams are never cached.
@@ -173,7 +179,7 @@ Full runbook, including the Hetzner fallback and Ollama over Tailscale: [docs/DE
 - **Alerting:** alerts show up in Prometheus and Grafana, but there's no Alertmanager, to keep hosting at $0.
 
 **Roadmap:**
-- [ ] Live on Oracle, with real traffic numbers in this README.
+- [ ] Live, with real traffic numbers in this README.
 - [ ] Per-project hard budget limits with alerts.
 - [ ] SLO: 99.5% availability excluding provider errors, p99 overhead under 10 ms, with burn-rate alerts.
 - [ ] Remove one Redis round trip per request, by folding reconcile into the next Allow.
@@ -189,7 +195,7 @@ cmd/mockupstream      fake provider with latency/error/429/stream fault injectio
 internal/             auth · ratelimit · cache · router · providers · usage · telemetry · config · server
 migrations/           goose SQL, embedded in the binary
 deploy/               Kustomize manifests Argo CD watches (app-of-apps)
-infra/terraform/      modules (cloud-init, OCI network, OCI node) + envs (oracle, hetzner)
+infra/terraform/      modules (cloud-init, OCI network, OCI node) + envs (azure, oracle, hetzner)
 loadtest/             k6 scripts, chaos harness, results
 docs/                 design doc, deploy runbook, ADRs
 ```

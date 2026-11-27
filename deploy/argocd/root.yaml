@@ -8,7 +8,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    repoURL: https://github.com/krishbansalofficial/tollgate.git
     targetRevision: main
     path: deploy/apps
   destination:

@@ -9,7 +9,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    repoURL: https://github.com/krishbansalofficial/tollgate.git
     targetRevision: main
     path: deploy/platform/sealed-secrets
   destination: { server: https://kubernetes.default.svc, namespace: kube-system }
@@ -25,7 +25,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    repoURL: https://github.com/krishbansalofficial/tollgate.git
     targetRevision: main
     path: deploy/platform/cert-manager
   destination: { server: https://kubernetes.default.svc, namespace: cert-manager }
@@ -42,7 +42,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    repoURL: https://github.com/krishbansalofficial/tollgate.git
     targetRevision: main
     path: deploy/platform/issuers
   destination: { server: https://kubernetes.default.svc }
@@ -58,7 +58,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    repoURL: https://github.com/krishbansalofficial/tollgate.git
     targetRevision: main
     path: deploy/observability
   destination: { server: https://kubernetes.default.svc, namespace: observability }
@@ -74,7 +74,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: git@github.com:krishbansalofficial/tollgate.git
+    repoURL: https://github.com/krishbansalofficial/tollgate.git
     targetRevision: main
     path: deploy/tollgate
   destination: { server: https://kubernetes.default.svc, namespace: tollgate }

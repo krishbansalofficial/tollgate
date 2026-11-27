@@ -1,7 +1,9 @@
 # Azure VM paid from "Azure for Students" credit (GitHub Student Pack: $100,
-# no card). Standard_B2s (2 vCPU, 4 GB, amd64) is ~$30/month, so the credit
-# lasts ~3 months; it renews yearly while enrolled. Same cloud-init module
-# as Oracle and Hetzner.
+# no card). Standard_B2pls_v2 (2 vCPU, 4 GB, ARM64) is ~$25/month, so the
+# credit lasts ~4 months; it renews yearly while enrolled. B2s and B2s_v2 are
+# not offered to student subscriptions (az vm list-skus). Burstable: fine for
+# portfolio traffic, throttles under sustained load once CPU credits run out.
+# Same cloud-init module as Oracle and Hetzner.
 # ponytail: when the credit runs out the subscription is disabled (no card on
 # file, so no surprise bill); move to envs/hetzner before that.
 
@@ -25,14 +27,14 @@ variable "ssh_cidr" {
   }
 }
 variable "location" {
-  # Azure for Students only allows some regions; the portal's "Create VM"
-  # page lists them. centralindia / southeastasia / eastus usually work.
+  # Azure for Students only allows some regions (az policy assignment list
+  # shows them): westus, westus2, canadacentral, francecentral, belgiumcentral.
   type    = string
-  default = "centralindia"
+  default = "westus2"
 }
 variable "size" {
   type    = string
-  default = "Standard_B2s"
+  default = "Standard_B2pls_v2"
 }
 variable "k3s_version" {
   type    = string
@@ -145,7 +147,7 @@ resource "azurerm_linux_virtual_machine" "node" {
   source_image_reference {
     publisher = "Canonical"
     offer     = "ubuntu-24_04-lts"
-    sku       = "server"
+    sku       = "server-arm64"
     version   = "latest"
   }
   lifecycle {

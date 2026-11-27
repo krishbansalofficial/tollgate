@@ -16,7 +16,6 @@ spec:
       labels: { app.kubernetes.io/name: tollgate, app.kubernetes.io/component: migrate }
     spec:
       restartPolicy: Never
-      imagePullSecrets: [{ name: ghcr-pull }]
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

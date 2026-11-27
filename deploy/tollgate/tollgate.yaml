@@ -18,7 +18,6 @@ spec:
       # Must exceed TOLLGATE_SHUTDOWN_DELAY (5s) + TOLLGATE_SHUTDOWN_TIMEOUT
       # (20s) so the app finishes draining and flushing before SIGKILL.
       terminationGracePeriodSeconds: 35
-      imagePullSecrets: [{ name: ghcr-pull }]
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

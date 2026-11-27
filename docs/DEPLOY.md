@@ -1,6 +1,6 @@
 # Deploying Tollgate
 
-Target: a single-node k3s cluster on Oracle Cloud Always Free (ARM64, 2 OCPU / 12 GB), managed by Argo CD from this repo. Expected cost: **$0/month**.
+Target: a single-node k3s cluster managed by Argo CD from this repo. Current host: **Azure for Students** (ARM64, 2 vCPU / 4 GB, paid from student credit, see [the Azure section](#alternative-host-azure-for-students-github-student-pack-no-card)). Oracle Always Free (steps 1–2 below) and Hetzner use the same node setup; from step 3 on, everything is identical.
 
 ```mermaid
 flowchart LR
@@ -8,7 +8,7 @@ flowchart LR
     ci --> rel[build+push once<br/>Trivy + SBOM on the digest]
     rel --> bump[pin digest<br/>deploy/tollgate]
     bump --> argo[Argo CD on k3s<br/>watches deploy/]
-    argo --> k3s[(Oracle A1 VM)]
+    argo --> k3s[(k3s VM)]
 ```
 
 After the one-time setup below, **every merge to `main` deploys itself**. CI builds the multi-arch image once and pushes `ghcr.io/krishbansalofficial/tollgate:sha-<commit>`. Trivy and the SBOM then run against that exact published digest, for both architectures. Only then does CI pin the digest in `deploy/tollgate/kustomization.yaml`, and Argo CD syncs it. A PreSync Job runs migrations first.
@@ -22,7 +22,7 @@ After the one-time setup below, **every merge to `main` deploys itself**. CI bui
 | argocd | Argo CD | ~1 Gi |
 | kube-system / cert-manager | k3s, Traefik, CoreDNS, sealed-secrets, cert-manager | ~1 Gi |
 
-That's about 4.5 GB at the limits, out of 12 GB.
+That's about 4.5 GB at the limits. Actual use is well below the limits; on a 4 GB node (Azure, Hetzner) the limits are overcommitted, so watch `kubectl top pods` after the first deploy.
 
 ## One-time setup (about 1 hour)
 
@@ -50,12 +50,9 @@ If apply fails with `Out of host capacity`, A1 capacity in that availability dom
 
 cloud-init installs k3s and opens 80/443 in the host firewall. Oracle's Ubuntu images block those ports at the iptables level even when the security list allows them. The Kubernetes API (6443) is never exposed; everything goes over SSH.
 
-### 3. Repo access for Argo CD (read-only deploy key)
+### 3. Repo access for Argo CD
 
-```bash
-ssh-keygen -t ed25519 -N "" -f ~/.ssh/tollgate_deploy_key -C argocd
-gh repo deploy-key add ~/.ssh/tollgate_deploy_key.pub --title argocd   # read-only by default
-```
+Nothing to do: the repo is public, so Argo CD reads it over HTTPS with no credentials. (For a private fork, register it in Argo CD with a read-only deploy key.)
 
 ### 4. DNS: free DuckDNS name
 
@@ -68,10 +65,10 @@ The ingresses use the `letsencrypt-prod` issuer. If you're iterating on DNS, swi
 ### 5. Bootstrap Argo CD
 
 ```bash
-infra/bootstrap.sh ubuntu@<public_ip> ~/.ssh/tollgate_deploy_key
+infra/bootstrap.sh ubuntu@<public_ip>
 ```
 
-This installs Argo CD, registers the repo using the deploy key (stored only in the cluster), and applies `deploy/argocd/root.yaml`. Argo then installs sealed-secrets, cert-manager, the issuers, observability and Tollgate, in sync-wave order.
+This installs Argo CD and applies `deploy/argocd/root.yaml`. Argo then installs sealed-secrets, cert-manager, the issuers, observability and Tollgate, in sync-wave order.
 
 ### 6. Secrets (Sealed Secrets)
 
@@ -122,14 +119,14 @@ When the laptop sleeps, Ollama's circuit breaker opens and the fallback fails fa
 
 ## Alternative host: Azure for Students (GitHub Student Pack, no card)
 
-`infra/terraform/envs/azure` builds a `Standard_B2s` VM (2 vCPU, 4 GB, amd64, ~$30/month) with a static IP and an NSG (SSH from one CIDR, 80/443 open), using the same cloud-init module. The $100 credit covers about 3 months and renews yearly while you are a student. With no card on file, running out disables the subscription instead of billing you.
+`infra/terraform/envs/azure` builds a `Standard_B2pls_v2` VM (2 vCPU, 4 GB, ARM64, ~$25/month) with a static IP and an NSG (SSH from one CIDR, 80/443 open), using the same cloud-init module. The $100 credit covers about 4 months and renews yearly while you are a student. With no card on file, running out disables the subscription instead of billing you.
 
 1. Claim the Azure offer from the Student Pack page ("connect your GitHub account on Microsoft Azure").
 2. `winget install Microsoft.AzureCLI`, then `az login`. Terraform uses this login; no key goes in a file.
 3. `cp terraform.tfvars.example terraform.tfvars` in that directory and fill it in. `subscription_id` comes from `az account show --query id -o tsv`.
 4. `terraform init && terraform apply`, then steps 3–7 above with `ubuntu@<ip>`.
 
-If apply fails with `RequestDisallowedByPolicy`, the region isn't allowed for student subscriptions; change `location`. If it fails with `SkuNotAvailable`, try `size = "Standard_B2als_v2"`.
+If apply fails with `RequestDisallowedByPolicy`, the region isn't allowed for student subscriptions; change `location`. If it fails with `SkuNotAvailable`, list allowed sizes with `az vm list-skus -l <region> --resource-type virtualMachines` (entries with empty `restrictions`).
 
 ## Fallback host: Hetzner (≈ €4/month)
 

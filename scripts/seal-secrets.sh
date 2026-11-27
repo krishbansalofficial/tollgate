@@ -28,8 +28,6 @@ ask() { # ask VAR "prompt": read a value with hidden input unless already set
 ask GROQ_API_KEY "Groq API key (Enter to skip)"
 ask ANTHROPIC_API_KEY "Anthropic API key (Enter to skip)"
 ask GEMINI_API_KEY "Gemini API key (Enter to skip)"
-ask GHCR_USER "GitHub username (image pulls)"
-ask GHCR_TOKEN "GitHub token with read:packages"
 ask GRAFANA_PASSWORD "Grafana admin password"
 
 cert=$(mktemp)
@@ -48,12 +46,8 @@ args=(--from-literal=postgres-password="$pg"
 [[ -n $ANTHROPIC_API_KEY ]] && args+=(--from-literal=anthropic-api-key="$ANTHROPIC_API_KEY")
 [[ -n $GEMINI_API_KEY ]] && args+=(--from-literal=gemini-api-key="$GEMINI_API_KEY")
 
-{
-  kubectl create secret generic tollgate-secrets -n tollgate "${args[@]}" --dry-run=client -o yaml | seal
-  echo ---
-  kubectl create secret docker-registry ghcr-pull -n tollgate --docker-server=ghcr.io \
-    --docker-username="$GHCR_USER" --docker-password="$GHCR_TOKEN" --dry-run=client -o yaml | seal
-} >"$APP_OUT"
+# The GHCR image is public, so no pull secret is needed.
+kubectl create secret generic tollgate-secrets -n tollgate "${args[@]}" --dry-run=client -o yaml | seal >"$APP_OUT"
 
 kubectl create secret generic grafana-admin -n observability \
   --from-literal=password="$GRAFANA_PASSWORD" --dry-run=client -o yaml | seal >"$OBS_OUT"

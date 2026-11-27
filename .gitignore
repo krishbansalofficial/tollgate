@@ -13,3 +13,5 @@ coverage.out
 
 # local Claude Code state (agent worktrees)
 .claude/
+*.tfplan
+tfplan
