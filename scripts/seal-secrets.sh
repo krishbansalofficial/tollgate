@@ -32,6 +32,18 @@ ask() { # ask VAR "prompt": read a value with hidden input unless already set
 ask GROQ_API_KEY "Groq API key (Enter to $blank)"
 ask ANTHROPIC_API_KEY "Anthropic API key (Enter to $blank)"
 ask GEMINI_API_KEY "Gemini API key (Enter to $blank)"
+# Catch copy-paste slips (a label character glued on, a stray space) before
+# they get sealed: the provider would only say "invalid key" at request time.
+check() { # check VAR prefix name
+  local v=${!1:-}
+  [[ -z $v ]] && return 0
+  [[ $v == "$2"* ]] || { echo "$3 key must start with '$2' (it starts with '${v:0:3}…'); re-run and paste only the key" >&2; exit 1; }
+  [[ $v != *[[:space:]]* ]] || { echo "$3 key contains whitespace; re-run and paste only the key" >&2; exit 1; }
+}
+check ANTHROPIC_API_KEY sk-ant- Anthropic
+check GROQ_API_KEY gsk_ Groq
+[[ ${GEMINI_API_KEY:-} != *[[:space:]]* ]] || { echo "Gemini key contains whitespace" >&2; exit 1; }
+
 if ((rotate)); then
   ask GRAFANA_PASSWORD "Grafana admin password (Enter to keep current)"
 else
