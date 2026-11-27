@@ -11,7 +11,7 @@ flowchart LR
     argo --> k3s[(k3s VM)]
 ```
 
-After the one-time setup below, **every merge to `main` deploys itself**. CI builds the multi-arch image once and pushes `ghcr.io/krishbansalofficial/tollgate:sha-<commit>`. Trivy and the SBOM then run against that exact published digest, for both architectures. Only then does CI pin the digest in `deploy/tollgate/kustomization.yaml`, and Argo CD syncs it. A migration Job (Argo CD Sync hook, wave 1) runs after the secrets and Postgres are healthy and before the new pods (wave 2).
+After the one-time setup below, **every merge to `main` deploys itself**. CI builds the multi-arch image once and pushes `ghcr.io/krishbansalofficial/tollgate:sha-<commit>`. Trivy and the SBOM then run against that exact published digest, for both architectures. Only then does CI pin the digest in `deploy/tollgate/kustomization.yaml`, on the bot-owned `deploy` branch rather than `main`: that branch is exactly the built commit plus one pin commit, and only moves forward. Argo CD's tollgate app tracks it, so `main` never gets bot commits and you never have to pull after a deploy. A migration Job (Argo CD Sync hook, wave 1) runs after the secrets and Postgres are healthy and before the new pods (wave 2).
 
 ## What runs on the node
 

@@ -162,7 +162,7 @@ Single-node k3s managed by **Argo CD**. One cloud-agnostic cloud-init module tur
    1. CI runs lint, `go test -race`, Terraform validate and kustomize build.
    2. It builds the multi-arch image and pushes it once to GHCR.
    3. Trivy and the SBOM run on that exact digest.
-   4. CI pins the digest in `deploy/`, and Argo CD rolls it out.
+   4. CI pins the digest on a bot-owned `deploy` branch (the built commit plus one pin commit), and Argo CD rolls it out. `main` only ever has human commits.
 
 Full runbook for each env, plus Ollama over Tailscale: [docs/DEPLOY.md](docs/DEPLOY.md).
 

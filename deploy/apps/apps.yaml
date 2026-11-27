@@ -75,7 +75,8 @@ spec:
   project: default
   source:
     repoURL: https://github.com/krishbansalofficial/tollgate.git
-    targetRevision: main
+    # CI's deploy branch: main + the image pin for exactly that commit.
+    targetRevision: deploy
     path: deploy/tollgate
   destination: { server: https://kubernetes.default.svc, namespace: tollgate }
   syncPolicy:

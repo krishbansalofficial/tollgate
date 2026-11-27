@@ -14,8 +14,9 @@ resources:
   # them with this cluster's sealed-secrets key and adds the file here.
   # See secrets.example.yaml for the keys it must contain.
 
-# CI rewrites newTag to the commit SHA after pushing the image; Argo CD sees
-# the commit and rolls it out. Do not edit by hand.
+# On main this pin is only a placeholder. CI writes the real tag and digest
+# on the bot-owned `deploy` branch (the built commit + one pin commit), which
+# Argo CD's tollgate app tracks, so main never gets bot commits. Don't edit.
 images:
   - name: ghcr.io/krishbansalofficial/tollgate
     newTag: sha-459b24248a5b

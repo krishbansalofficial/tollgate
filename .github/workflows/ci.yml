@@ -142,6 +142,10 @@ jobs:
   # GitOps hand-off: pin the scanned digest in deploy/tollgate; Argo CD rolls
   # it out. A digest is immutable, so the tag can't be re-pointed afterwards.
   # Commits made with GITHUB_TOKEN don't trigger workflows, so no loop.
+  # Pins the image on the bot-owned `deploy` branch, never on main, so main
+  # only has human commits (no "pull before you push" after every deploy).
+  # deploy = exactly the commit that was built + one pin commit, so the
+  # manifests Argo CD applies always match the image they were built with.
   bump:
     needs: release
     runs-on: ubuntu-latest
@@ -150,9 +154,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Latest main, not the triggering commit: an earlier run's bump may
-          # already have edited the same line, and a stale copy would conflict.
-          ref: main
+          ref: ${{ github.sha }}
+          fetch-depth: 0 # ancestry check below needs history
           persist-credentials: false # the token is used only by the push below
       - name: pin image digest in deploy/tollgate
         env:
@@ -163,15 +166,24 @@ jobs:
           f=deploy/tollgate/kustomization.yaml
           sed -i -E "/^    digest: /d; s/^(    newTag: ).*/\1${TAG}\n    digest: ${DIGEST}/" "$f"
           grep -q "digest: ${DIGEST}" "$f"
-      - name: commit and push (only the expected change)
+      - name: commit and move the deploy branch forward
         env:
           TAG: ${{ needs.release.outputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "deploy: tollgate ${TAG}"
-          git pull --rebase "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
           changed=$(git diff --name-only HEAD~1 HEAD)
           [[ $changed == "deploy/tollgate/kustomization.yaml" ]] || { echo "unexpected change set: $changed"; exit 1; }
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
+          # Forward only: a slow older run must not roll the cluster back.
+          # deploy^ is the source commit the current deploy was built from.
+          old=$(git ls-remote "$remote" refs/heads/deploy | cut -f1)
+          if [[ -n $old ]]; then
+            git fetch -q "$remote" "$old"
+            if ! git merge-base --is-ancestor "$old^" "$GITHUB_SHA"; then
+              echo "deploy already holds a newer build; leaving it"; exit 0
+            fi
+          fi
+          git push --force-with-lease="refs/heads/deploy:${old}" "$remote" HEAD:refs/heads/deploy
