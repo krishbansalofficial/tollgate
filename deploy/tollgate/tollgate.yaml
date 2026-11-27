@@ -92,10 +92,10 @@ metadata:
 spec:
   ingressClassName: traefik
   tls:
-    - hosts: [change-me.duckdns.org] # your DuckDNS name (docs/DEPLOY.md step 4)
+    - hosts: [tollg.duckdns.org] # your DuckDNS name (docs/DEPLOY.md step 4)
       secretName: tollgate-tls
   rules:
-    - host: change-me.duckdns.org
+    - host: tollg.duckdns.org
       http:
         paths:
           - path: /v1

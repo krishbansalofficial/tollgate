@@ -63,10 +63,10 @@ metadata:
 spec:
   ingressClassName: traefik
   tls:
-    - hosts: [grafana.change-me.duckdns.org]
+    - hosts: [grafana.tollg.duckdns.org]
       secretName: grafana-tls
   rules:
-    - host: grafana.change-me.duckdns.org
+    - host: grafana.tollg.duckdns.org
       http:
         paths:
           - path: /
