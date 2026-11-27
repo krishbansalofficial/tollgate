@@ -31,7 +31,7 @@ ask GEMINI_API_KEY "Gemini API key (Enter to skip)"
 ask GRAFANA_PASSWORD "Grafana admin password"
 
 cert=$(mktemp)
-trap 'rm -f "$cert"' EXIT
+trap 'rm -f "$cert" "$APP_OUT.tmp" "$OBS_OUT.tmp"' EXIT
 echo "==> fetching the cluster's sealing certificate"
 # One quoted string: ssh re-parses its args through the remote shell, which
 # would strip the backslash in tls\.crt and return nothing.
@@ -50,10 +50,13 @@ args=(--from-literal=postgres-password="$pg"
 [[ -n $GEMINI_API_KEY ]] && args+=(--from-literal=gemini-api-key="$GEMINI_API_KEY")
 
 # The GHCR image is public, so no pull secret is needed.
-kubectl create secret generic tollgate-secrets -n tollgate "${args[@]}" --dry-run=client -o yaml | seal >"$APP_OUT"
+kubectl create secret generic tollgate-secrets -n tollgate "${args[@]}" --dry-run=client -o yaml | seal >"$APP_OUT.tmp"
 
 kubectl create secret generic grafana-admin -n observability \
-  --from-literal=password="$GRAFANA_PASSWORD" --dry-run=client -o yaml | seal >"$OBS_OUT"
+  --from-literal=password="$GRAFANA_PASSWORD" --dry-run=client -o yaml | seal >"$OBS_OUT.tmp"
+# Only publish complete output: a failed seal must not leave a file that
+# blocks the next run or gets committed half-written.
+mv "$APP_OUT.tmp" "$APP_OUT"; mv "$OBS_OUT.tmp" "$OBS_OUT"
 
 # Reference the files from their kustomizations (idempotent).
 for k in "$ROOT/deploy/tollgate/kustomization.yaml" "$ROOT/deploy/observability/kustomization.yaml"; do

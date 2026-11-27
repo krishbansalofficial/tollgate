@@ -15,3 +15,4 @@ coverage.out
 .claude/
 *.tfplan
 tfplan
+*.tmp
