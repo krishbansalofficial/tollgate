@@ -55,7 +55,7 @@ jobs:
       - run: terraform fmt -recursive -check infra/terraform
       - name: terraform validate
         run: |
-          for env in oracle hetzner digitalocean; do
+          for env in oracle hetzner azure; do
             terraform -chdir="infra/terraform/envs/$env" init -backend=false -input=false -lockfile=readonly >/dev/null
             terraform -chdir="infra/terraform/envs/$env" validate
           done

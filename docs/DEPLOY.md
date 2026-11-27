@@ -120,15 +120,16 @@ When the laptop sleeps, Ollama's circuit breaker opens and the fallback fails fa
 | Trace a request | paste its `X-Request-ID` into Grafana → Explore → Tempo |
 | Alerts | Prometheus `/alerts` and Grafana; no Alertmanager, to keep $0 |
 
-## Alternative host: DigitalOcean (GitHub Student Pack credit)
+## Alternative host: Azure for Students (GitHub Student Pack, no card)
 
-`infra/terraform/envs/digitalocean` builds an `s-2vcpu-4gb` droplet (amd64, ~$24/month) with the same cloud-init module. The Student Pack's $200 credit covers about 8 months.
+`infra/terraform/envs/azure` builds a `Standard_B2s` VM (2 vCPU, 4 GB, amd64, ~$30/month) with a static IP and an NSG (SSH from one CIDR, 80/443 open), using the same cloud-init module. The $100 credit covers about 3 months and renews yearly while you are a student. With no card on file, running out disables the subscription instead of billing you.
 
-1. Claim the DigitalOcean offer from the Student Pack page, then DO console → **API** → Generate New Token (read + write).
-2. `cp terraform.tfvars.example terraform.tfvars` in that directory and fill it in.
-3. `terraform init && terraform apply`, then steps 3–7 above with `root@<ip>` in place of `ubuntu@<ip>`.
+1. Claim the Azure offer from the Student Pack page ("connect your GitHub account on Microsoft Azure").
+2. `winget install Microsoft.AzureCLI`, then `az login`. Terraform uses this login; no key goes in a file.
+3. `cp terraform.tfvars.example terraform.tfvars` in that directory and fill it in. `subscription_id` comes from `az account show --query id -o tsv`.
+4. `terraform init && terraform apply`, then steps 3–7 above with `ubuntu@<ip>`.
 
-The image is multi-arch, so amd64 needs no changes. **Destroy the droplet or move to Hetzner before the credit expires**, or it bills the card on file. Set a billing alert in the DO console.
+If apply fails with `RequestDisallowedByPolicy`, the region isn't allowed for student subscriptions; change `location`. If it fails with `SkuNotAvailable`, try `size = "Standard_B2als_v2"`.
 
 ## Fallback host: Hetzner (≈ €4/month)
 
