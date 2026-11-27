@@ -33,9 +33,12 @@ ask GRAFANA_PASSWORD "Grafana admin password"
 cert=$(mktemp)
 trap 'rm -f "$cert"' EXIT
 echo "==> fetching the cluster's sealing certificate"
-ssh -o BatchMode=yes "$TARGET" sudo k3s kubectl -n kube-system get secret \
+# One quoted string: ssh re-parses its args through the remote shell, which
+# would strip the backslash in tls\.crt and return nothing.
+ssh -o BatchMode=yes "$TARGET" "sudo k3s kubectl -n kube-system get secret \
   -l sealedsecrets.bitnami.com/sealed-secrets-key=active \
-  -o 'jsonpath={.items[0].data.tls\.crt}' | base64 -d >"$cert"
+  -o 'jsonpath={.items[0].data.tls\.crt}'" | base64 -d >"$cert"
+[[ -s $cert ]] || { echo "could not fetch the sealing certificate" >&2; exit 1; }
 
 seal() { kubeseal --cert "$cert" --format yaml; }
 pg=$(openssl rand -hex 24)
