@@ -357,6 +357,11 @@ func keys(ctx context.Context, st *auth.PGStore, args []string) error {
 		if *project == "" || *usd < 0 {
 			return errors.New("--project is required and --usd must be >= 0")
 		}
+		// The column is numeric(12,2): a smaller budget would round to 0, which
+		// means "no budget", silently removing the cap instead of tightening it.
+		if *usd > 0 && *usd < 0.01 {
+			return errors.New("--usd must be at least 0.01 (or 0 to remove the budget)")
+		}
 		n, err := st.SetBudget(ctx, *project, *usd)
 		if err != nil {
 			return err
