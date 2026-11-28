@@ -291,3 +291,21 @@ func TestReadyz(t *testing.T) {
 		}
 	}
 }
+
+func TestLandingPageOnlyAtRoot(t *testing.T) {
+	g := newGateway(t, gwOpts{})
+	for path, want := range map[string]int{"/": 200, "/nope": 404, "/v1": 404} {
+		resp, err := http.Get(g.url + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("GET %s: status %d, want %d", path, resp.StatusCode, want)
+		}
+		if path == "/" && (!strings.Contains(string(b), "<title>Tollgate") || resp.Header.Get("Content-Security-Policy") == "") {
+			t.Errorf("GET /: missing page or CSP header")
+		}
+	}
+}

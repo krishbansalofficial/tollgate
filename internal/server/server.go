@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -77,10 +78,27 @@ func New(d Deps) http.Handler {
 	}
 	s := &Server{d}
 	mux := http.NewServeMux()
+	// {$} matches "/" only, so unknown paths still 404.
+	mux.HandleFunc("GET /{$}", landing)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.Handle("POST /v1/chat/completions", auth.Middleware(d.Auth, writeError)(http.HandlerFunc(s.chat)))
 	return s.requestID(s.accessLog(mux))
+}
+
+// landingHTML is a static page for people who open the URL in a browser.
+//
+//go:embed landing.html
+var landingHTML []byte
+
+func landing(w http.ResponseWriter, _ *http.Request) {
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	// No scripts on the page; inline styles and the data: favicon only.
+	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Cache-Control", "public, max-age=300")
+	_, _ = w.Write(landingHTML)
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
