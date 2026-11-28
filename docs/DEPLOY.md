@@ -116,6 +116,7 @@ When the laptop sleeps, Ollama's circuit breaker opens and the fallback fails fa
 |---|---|
 | Deploy | merge to `main` |
 | Roll back | `git revert` the `deploy: tollgate sha-…` commit |
+| Set a project's monthly budget | `tollgate keys budget --project myapp --usd 5` (`--usd 0` removes it). Over budget, requests get 402 `budget_exceeded`. Takes effect within the 30 s key-cache TTL; spend is re-read every 10 s, so a busy project can overshoot by about 10 s of traffic |
 | Revoke a key | `tollgate keys revoke --prefix tg_XXXXXXXX` (takes effect within the 30 s key-cache TTL) |
 | Logs | `sudo k3s kubectl -n tollgate logs deploy/tollgate` (JSON, with `trace_id`) |
 | Trace a request | paste its `X-Request-ID` into Grafana → Explore → Tempo |

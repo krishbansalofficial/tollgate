@@ -195,7 +195,8 @@ Full runbook for each env, plus Ollama over Tailscale: [docs/DEPLOY.md](docs/DEP
 **Roadmap:**
 - [x] Live, with ledger numbers in this README.
 - [ ] Real apps routed through it, with a Grafana screenshot.
-- [ ] Per-project hard budget limits with alerts.
+- [x] Per-project monthly budgets: over budget returns 402 (`tollgate keys budget --project X --usd 5`).
+- [ ] Budget alerts before the cap is hit.
 - [ ] SLO: 99.5% availability excluding provider errors, p99 overhead under 10 ms, with burn-rate alerts.
 - [ ] Remove one Redis round trip per request, by folding reconcile into the next Allow.
 - [ ] Semantic cache (pgvector), with its false-hit rate logged.
@@ -205,7 +206,7 @@ Full runbook for each env, plus Ollama over Tailscale: [docs/DEPLOY.md](docs/DEP
 ## Repository layout
 
 ```
-cmd/tollgate          gateway binary (serve, migrate, keys create|revoke)
+cmd/tollgate          gateway binary (serve, migrate, keys create|budget|revoke)
 cmd/mockupstream      fake provider with latency/error/429/stream fault injection
 internal/             auth · ratelimit · cache · router · providers · usage · telemetry · config · server
 migrations/           goose SQL, embedded in the binary

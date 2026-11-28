@@ -70,4 +70,27 @@ func TestPGSinkCopy(t *testing.T) {
 	if rows != n || ttfts != 1 || cost < 0.15 || cost > 0.16 { // 1234 × 0.000123 = 0.151782
 		t.Fatalf("rows=%d cost=%f ttfts=%d", rows, cost, ttfts)
 	}
+
+	// MonthSpend: only this UTC month counts, per project, and is cached.
+	const project = "7f1a9c3e-0000-4000-8000-000000000001"
+	if _, err := pool.Exec(ctx, `INSERT INTO usage_events (ts, request_id, project_id, key_id, model, provider, tokens_in, tokens_out,
+		usage_estimated, latency_ms, upstream_ms, cost_usd, cost_saved_usd, cache, status, attempts, stream)
+		SELECT date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' - interval '1 second', 'old', project_id, key_id, model, provider,
+		       0, 0, false, 0, 0, 99, 0, 'MISS', 200, 1, false FROM usage_events LIMIT 1`); err != nil {
+		t.Fatal(err)
+	}
+	ms := NewMonthSpend(pool, time.Hour)
+	got, err := ms.Get(ctx, project)
+	if err != nil || got < 0.15 || got > 0.16 {
+		t.Fatalf("month spend = %f, %v; want ~0.1518 (last month's $99 excluded)", got, err)
+	}
+	if other, err := ms.Get(ctx, "7f1a9c3e-0000-4000-8000-0000000000ff"); err != nil || other != 0 {
+		t.Fatalf("other project spend = %f, %v; want 0", other, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE usage_events SET cost_usd = 1 WHERE request_id = 'r'`); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := ms.Get(ctx, project); again != got {
+		t.Fatalf("cached spend changed within ttl: %f -> %f", got, again)
+	}
 }

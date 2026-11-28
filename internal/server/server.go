@@ -52,10 +52,12 @@ type ObserverFunc func(Outcome)
 func (f ObserverFunc) Observe(o Outcome) { f(o) }
 
 type Deps struct {
-	Auth             *auth.Authenticator
-	Limiter          *ratelimit.Limiter // nil disables rate limiting
-	Cache            *cache.Cache       // nil disables caching
-	Router           *router.Router
+	Auth    *auth.Authenticator
+	Limiter *ratelimit.Limiter // nil disables rate limiting
+	Cache   *cache.Cache       // nil disables caching
+	Router  *router.Router
+	// Spend returns a project's spend this month in USD. nil disables budgets.
+	Spend            func(ctx context.Context, projectID string) (float64, error)
 	Observer         Observer
 	Ready            func(context.Context) error
 	Logger           *slog.Logger
@@ -159,7 +161,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.admit(q) {
+	if !s.withinBudget(q) || !s.admit(q) {
 		return
 	}
 	// Post-response work (reconcile, cache fill) must survive the client
@@ -223,6 +225,30 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	})
+}
+
+// withinBudget rejects a project that has spent its monthly budget. Checked
+// before the rate limiter so a blocked project doesn't burn its quota.
+// ponytail: spend lags by the spend cache TTL plus the ledger flush (~1 s),
+// so a project can overshoot by that much traffic. Reserve cost in Redis
+// up front if budgets ever need to be exact.
+func (s *Server) withinBudget(q *request) bool {
+	if s.Spend == nil || q.key.BudgetUSD <= 0 {
+		return true
+	}
+	spent, err := s.Spend(q.r.Context(), q.key.ProjectID)
+	if err != nil {
+		// Fail open, like the ledger itself: a Postgres blip shouldn't take
+		// every budgeted project offline.
+		s.Logger.WarnContext(q.r.Context(), "budget check failed; allowing", "request_id", q.out.RequestID, "err", err)
+		return true
+	}
+	if spent >= q.key.BudgetUSD {
+		q.fail(http.StatusPaymentRequired, "budget_exceeded", "insufficient_quota", "budget_exceeded",
+			"this project has used its monthly budget")
+		return false
+	}
+	return true
 }
 
 // admit applies the rate limit, writing the rejection itself. It reserves

@@ -17,7 +17,9 @@ type Key struct {
 	ProjectName string
 	RPMLimit    int
 	TPMLimit    int
-	Revoked     bool
+	// BudgetUSD is the project's monthly spend cap; 0 means no cap.
+	BudgetUSD float64
+	Revoked   bool
 }
 
 var (

@@ -21,10 +21,10 @@ func (s *PGStore) LookupKey(ctx context.Context, hash []byte) (Key, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT k.id::text, p.id::text, p.name,
 		       COALESCE(k.rpm_limit, p.rpm_limit), COALESCE(k.tpm_limit, p.tpm_limit),
-		       k.revoked_at IS NOT NULL
+		       COALESCE(p.monthly_budget_usd, 0)::float8, k.revoked_at IS NOT NULL
 		FROM api_keys k JOIN projects p ON p.id = k.project_id
 		WHERE k.key_hash = $1`, hash,
-	).Scan(&k.ID, &k.ProjectID, &k.ProjectName, &k.RPMLimit, &k.TPMLimit, &k.Revoked)
+	).Scan(&k.ID, &k.ProjectID, &k.ProjectName, &k.RPMLimit, &k.TPMLimit, &k.BudgetUSD, &k.Revoked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Key{}, ErrNotFound
 	}
@@ -62,6 +62,13 @@ func (s *PGStore) CreateKey(ctx context.Context, project, name string, rpm, tpm 
 		return "", err
 	}
 	return raw, tx.Commit(ctx)
+}
+
+// SetBudget sets a project's monthly budget in USD; 0 removes it. Running
+// instances pick it up within one key-cache TTL.
+func (s *PGStore) SetBudget(ctx context.Context, project string, usd float64) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE projects SET monthly_budget_usd = NULLIF($2::numeric, 0) WHERE name = $1`, project, usd)
+	return tag.RowsAffected(), err
 }
 
 // RevokeKey marks every key with the given display prefix revoked. Running

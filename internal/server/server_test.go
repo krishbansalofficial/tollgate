@@ -42,6 +42,8 @@ type gwOpts struct {
 	rpm             int
 	failClosed      bool
 	redisDown       bool
+	budget          float64
+	spend           func(context.Context, string) (float64, error)
 }
 
 type gateway struct {
@@ -104,10 +106,11 @@ func newGateway(t *testing.T, o gwOpts) *gateway {
 	raw, h, _, _ := auth.Generate()
 	g.key = raw
 	handler := New(Deps{
-		Auth:             auth.NewAuthenticator(memStore{h: {ID: "k1", ProjectID: "p1", ProjectName: "proj", RPMLimit: rpm, TPMLimit: 1_000_000}}, time.Minute),
+		Auth:             auth.NewAuthenticator(memStore{h: {ID: "k1", ProjectID: "p1", ProjectName: "proj", RPMLimit: rpm, TPMLimit: 1_000_000, BudgetUSD: o.budget}}, time.Minute),
 		Limiter:          ratelimit.New(rdb, !o.failClosed),
 		Cache:            cache.New(rdb, time.Minute),
 		Router:           router.New(cfg, cat, provs, nil),
+		Spend:            o.spend,
 		Observer:         ObserverFunc(func(oc Outcome) { g.mu.Lock(); g.outcomes = append(g.outcomes, oc); g.mu.Unlock() }),
 		Ready:            func(context.Context) error { return nil },
 		Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -307,5 +310,42 @@ func TestLandingPageOnlyAtRoot(t *testing.T) {
 		if path == "/" && (!strings.Contains(string(b), "<title>Tollgate") || resp.Header.Get("Content-Security-Policy") == "") {
 			t.Errorf("GET /: missing page or CSP header")
 		}
+	}
+}
+
+func TestBudget(t *testing.T) {
+	spent := func(usd float64, err error) func(context.Context, string) (float64, error) {
+		return func(_ context.Context, p string) (float64, error) {
+			if p != "p1" {
+				t.Errorf("spend looked up for project %q", p)
+			}
+			return usd, err
+		}
+	}
+	for name, tc := range map[string]struct {
+		budget float64
+		spend  func(context.Context, string) (float64, error)
+		want   int
+	}{
+		"over budget":        {5, spent(5, nil), http.StatusPaymentRequired},
+		"under budget":       {5, spent(4.99, nil), http.StatusOK},
+		"no budget":          {0, spent(1e9, nil), http.StatusOK},
+		"spend lookup fails": {5, spent(0, errors.New("db down")), http.StatusOK}, // fail open
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newGateway(t, gwOpts{budget: tc.budget, spend: tc.spend})
+			resp := g.post(t, okBody)
+			if resp.StatusCode != tc.want {
+				t.Fatalf("status %d, want %d", resp.StatusCode, tc.want)
+			}
+			if tc.want == http.StatusPaymentRequired {
+				if n := g.primary.Requests(); n != 0 {
+					t.Errorf("upstream called %d times for a blocked project", n)
+				}
+				if o := g.last(); o.ErrorClass != "budget_exceeded" {
+					t.Errorf("error class %q", o.ErrorClass)
+				}
+			}
+		})
 	}
 }

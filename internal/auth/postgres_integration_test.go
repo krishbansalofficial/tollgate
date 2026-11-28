@@ -63,6 +63,24 @@ func TestPGStore(t *testing.T) {
 	if k.ProjectName != "demo" || k.RPMLimit != 60 || k.TPMLimit != 500 || k.Revoked {
 		t.Errorf("limits not inherited/overridden correctly: %+v", k)
 	}
+	if k.BudgetUSD != 0 {
+		t.Errorf("new project should have no budget: %+v", k)
+	}
+	if n, err := st.SetBudget(ctx, "demo", 12.5); err != nil || n != 1 {
+		t.Fatalf("set budget: n=%d err=%v", n, err)
+	}
+	if k, _ := st.LookupKey(ctx, h[:]); k.BudgetUSD != 12.5 {
+		t.Errorf("budget not loaded: %+v", k)
+	}
+	if n, _ := st.SetBudget(ctx, "nope", 1); n != 0 {
+		t.Errorf("budget set on a missing project")
+	}
+	if _, err := st.SetBudget(ctx, "demo", 0); err != nil {
+		t.Fatal(err)
+	}
+	if k, _ := st.LookupKey(ctx, h[:]); k.BudgetUSD != 0 {
+		t.Errorf("budget 0 should remove it: %+v", k)
+	}
 
 	if n, err := st.RevokeKey(ctx, raw[:11]); err != nil || n != 1 {
 		t.Fatalf("revoke: n=%d err=%v", n, err)

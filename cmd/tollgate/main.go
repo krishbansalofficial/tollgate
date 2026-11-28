@@ -131,6 +131,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, pool *pgxpo
 		Limiter: limiter,
 		Cache:   respCache,
 		Router:  rt,
+		Spend:   usage.NewMonthSpend(pool, 10*time.Second).Get,
 		// Fan out each request's Outcome to metrics and the ledger. Both are
 		// non-blocking (counter increments; a non-blocking channel send).
 		Observer: server.ObserverFunc(func(o server.Outcome) {
@@ -325,7 +326,7 @@ func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 
 func keys(ctx context.Context, st *auth.PGStore, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: keys create|revoke [flags]")
+		return errors.New("usage: keys create|budget|revoke [flags]")
 	}
 	fs := flag.NewFlagSet("keys "+args[0], flag.ContinueOnError)
 	switch args[0] {
@@ -346,6 +347,24 @@ func keys(ctx context.Context, st *auth.PGStore, args []string) error {
 		}
 		fmt.Println(raw)
 		fmt.Fprintln(os.Stderr, "store this key now; it cannot be shown again")
+		return nil
+	case "budget":
+		project := fs.String("project", "", "project name")
+		usd := fs.Float64("usd", 0, "monthly budget in USD (0 removes it)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *project == "" || *usd < 0 {
+			return errors.New("--project is required and --usd must be >= 0")
+		}
+		n, err := st.SetBudget(ctx, *project, *usd)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("no project named %q", *project)
+		}
+		fmt.Printf("budget for %s: $%.2f/month (0 = none)\n", *project, *usd)
 		return nil
 	case "revoke":
 		prefix := fs.String("prefix", "", "display prefix, e.g. tg_a1B2c3D4")
