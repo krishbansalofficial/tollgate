@@ -19,6 +19,16 @@ type Catalog struct {
 type Price struct {
 	InputPerMTok  float64 `yaml:"input_per_mtok"`
 	OutputPerMTok float64 `yaml:"output_per_mtok"`
+	// Long is an optional tier for large prompts: a request whose prompt has
+	// more than Long.OverInputTokens tokens is priced entirely at Long's rates
+	// (input and output), as Anthropic bills Haiku 5.5.
+	Long *LongPrice `yaml:"long,omitempty"`
+}
+
+type LongPrice struct {
+	OverInputTokens int     `yaml:"over_input_tokens"`
+	InputPerMTok    float64 `yaml:"input_per_mtok"`
+	OutputPerMTok   float64 `yaml:"output_per_mtok"`
 }
 
 type Alias struct {
@@ -42,9 +52,12 @@ func LoadCatalog(path string) (*Catalog, error) {
 }
 
 func (c *Catalog) validate() error {
-	for name := range c.Models {
+	for name, p := range c.Models {
 		if _, _, ok := split(name); !ok {
 			return fmt.Errorf("catalog: model %q must be provider/model", name)
+		}
+		if p.Long != nil && p.Long.OverInputTokens <= 0 {
+			return fmt.Errorf("catalog: model %q: long.over_input_tokens must be > 0", name)
 		}
 	}
 	for name, a := range c.Aliases {
@@ -68,7 +81,11 @@ func (c *Catalog) validate() error {
 // Cost in USD for the given token counts; 0 for models not in the catalog.
 func (c *Catalog) Cost(model string, in, out int) float64 {
 	p := c.Models[model]
-	return (float64(in)*p.InputPerMTok + float64(out)*p.OutputPerMTok) / 1e6
+	inRate, outRate := p.InputPerMTok, p.OutputPerMTok
+	if l := p.Long; l != nil && in > l.OverInputTokens {
+		inRate, outRate = l.InputPerMTok, l.OutputPerMTok
+	}
+	return (float64(in)*inRate + float64(out)*outRate) / 1e6
 }
 
 func split(model string) (provider, native string, ok bool) {

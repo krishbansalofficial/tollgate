@@ -3,7 +3,9 @@
 # an unpriced model would bypass spend tracking, so unknown models are 404s.
 #
 # Price sources (re-verify before relying on cost figures):
-#   anthropic: Claude API pricing, checked 2026-11-24 (haiku-5-5 $0.10/$0.50, sonnet-5-5 $2/$10)
+#   anthropic: platform.claude.com/docs/en/about-claude/pricing, checked 2026-11-27.
+#     haiku-5-5 $0.10/$0.50, or $0.50/$2.50 for the whole request when the
+#     prompt is over 100,000 tokens; sonnet-5-5 $2/$10 at any prompt size.
 #   groq: console.groq.com/docs/models, checked 2026-11-27. The Llama models
 #     moved to enterprise-only ("does not exist" for API keys), so gpt-oss replaces them.
 #   gemini: ai.google.dev/gemini-api/docs/pricing (paid tier, text), checked
@@ -11,7 +13,9 @@
 # Model ids are checked against each provider's /models endpoint, not docs alone.
 #   ollama / mock: local, $0
 models:
-  anthropic/claude-haiku-5-5:     { input_per_mtok: 0.10, output_per_mtok: 0.50 }
+  anthropic/claude-haiku-5-5:
+    { input_per_mtok: 0.10, output_per_mtok: 0.50,
+      long: { over_input_tokens: 100000, input_per_mtok: 0.50, output_per_mtok: 2.50 } }
   anthropic/claude-sonnet-5-5:    { input_per_mtok: 2.00, output_per_mtok: 10.00 }
   groq/openai/gpt-oss-20b:        { input_per_mtok: 0.075, output_per_mtok: 0.30 }
   groq/openai/gpt-oss-120b:       { input_per_mtok: 0.15, output_per_mtok: 0.60 }

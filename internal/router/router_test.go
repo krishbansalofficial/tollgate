@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -265,5 +266,31 @@ func TestClientFaultDoesNotCloseBreaker(t *testing.T) {
 	_, _ = r.Chat(context.Background(), req("a/big")) // half-open probe answered with a 400
 	if s := r.BreakerState("a"); s != HalfOpen {
 		t.Fatalf("breaker = %v, want half_open", s)
+	}
+}
+
+func TestCostLongPromptTier(t *testing.T) {
+	c := &Catalog{Models: map[string]Price{"a/h": {InputPerMTok: 0.10, OutputPerMTok: 0.50,
+		Long: &LongPrice{OverInputTokens: 100_000, InputPerMTok: 0.50, OutputPerMTok: 2.50}}}}
+	for _, tc := range []struct {
+		in, out int
+		want    float64
+	}{
+		{100_000, 1_000, (100_000*0.10 + 1_000*0.50) / 1e6}, // at the threshold: base rates
+		{100_001, 1_000, (100_001*0.50 + 1_000*2.50) / 1e6}, // over it: the whole request at long rates
+	} {
+		if got := c.Cost("a/h", tc.in, tc.out); math.Abs(got-tc.want) > 1e-12 {
+			t.Errorf("Cost(%d, %d) = %g, want %g", tc.in, tc.out, got, tc.want)
+		}
+	}
+}
+
+func TestShippedCatalogLoads(t *testing.T) {
+	c, err := LoadCatalog("../../config/catalog.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := c.Models["anthropic/claude-haiku-5-5"].Long; l == nil || l.OverInputTokens != 100_000 {
+		t.Errorf("haiku long tier not loaded: %+v", l)
 	}
 }
