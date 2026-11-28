@@ -146,11 +146,14 @@ jobs:
   # only has human commits (no "pull before you push" after every deploy).
   # deploy = exactly the commit that was built + one pin commit, so the
   # manifests Argo CD applies always match the image they were built with.
+  # Pushes with a write deploy key (secret DEPLOY_SSH_KEY): a ruleset locks
+  # the deploy branch to that key and repo admins, and the GITHUB_TOKEN can't
+  # bypass rulesets on a personal repo.
   bump:
     needs: release
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -169,9 +172,15 @@ jobs:
       - name: commit and move the deploy branch forward
         env:
           TAG: ${{ needs.release.outputs.tag }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # GitHub's host keys from its HTTPS API, so ssh never trusts on first use.
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          curl -fsS https://api.github.com/meta | jq -r '.ssh_keys[] | "github.com " + .' > ~/.ssh/known_hosts
+          [[ -s ~/.ssh/known_hosts ]] || { echo "no GitHub host keys"; exit 1; }
+          eval "$(ssh-agent -s)" >/dev/null
+          ssh-add -q - <<<"$DEPLOY_SSH_KEY"
+          remote="git@github.com:${GITHUB_REPOSITORY}.git"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "deploy: tollgate ${TAG}"
