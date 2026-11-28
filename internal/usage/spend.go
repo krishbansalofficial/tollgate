@@ -39,6 +39,11 @@ func (s *MonthSpend) Get(_ context.Context, projectID string) (float64, error) {
 	}
 	v, err, _ := s.sf.Do(projectID, func() (any, error) { return s.query(projectID, now) })
 	if err != nil {
+		if ok {
+			// Serve the last known spend: a project already over budget stays
+			// blocked while Postgres is unreachable, instead of failing open.
+			return e.usd, nil
+		}
 		return 0, err
 	}
 	return v.(float64), nil
