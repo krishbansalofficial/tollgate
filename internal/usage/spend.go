@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/singleflight"
 )
 
 // MonthSpend sums each project's ledger cost for the current UTC calendar
@@ -16,6 +17,7 @@ type MonthSpend struct {
 	ttl  time.Duration
 	mu   sync.Mutex
 	m    map[string]spendEntry
+	sf   singleflight.Group // concurrent misses for one project share one query
 }
 
 type spendEntry struct {
@@ -27,7 +29,7 @@ func NewMonthSpend(pool *pgxpool.Pool, ttl time.Duration) *MonthSpend {
 	return &MonthSpend{pool: pool, ttl: ttl, m: map[string]spendEntry{}}
 }
 
-func (s *MonthSpend) Get(ctx context.Context, projectID string) (float64, error) {
+func (s *MonthSpend) Get(_ context.Context, projectID string) (float64, error) {
 	now := time.Now()
 	s.mu.Lock()
 	e, ok := s.m[projectID]
@@ -35,6 +37,18 @@ func (s *MonthSpend) Get(ctx context.Context, projectID string) (float64, error)
 	if ok && now.Before(e.expires) {
 		return e.usd, nil
 	}
+	v, err, _ := s.sf.Do(projectID, func() (any, error) { return s.query(projectID, now) })
+	if err != nil {
+		return 0, err
+	}
+	return v.(float64), nil
+}
+
+func (s *MonthSpend) query(projectID string, now time.Time) (float64, error) {
+	// Own short deadline: detached from any one caller, so a slow Postgres
+	// can't pile up waiting requests.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	var usd float64
 	// Served by usage_events_project_ts_idx.
 	err := s.pool.QueryRow(ctx, `
