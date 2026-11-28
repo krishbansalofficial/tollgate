@@ -64,7 +64,10 @@ So far the only traffic is the deployment's own smoke tests. These are the ledge
 
 **Gateway overhead in production: 1.0 ms p50** (total latency minus upstream time, over the 11 routed requests). That is higher than the 0.2 ms benchmark below, most likely because so few requests mostly hit cold connections and a cold auth cache.
 
-Apps routed through Tollgate and a Grafana screenshot will be added here once real apps send traffic.
+**Apps routed through Tollgate:**
+- [keshav-ai-platform](https://github.com/krishbansalofficial/keshav-ai-platform): its RAG lead assistant drafts replies to customer inquiries through `anthropic/claude-haiku-5-5`, under its own project with a $5/month budget. A grounded draft costs about $0.0001 (376 tokens in, 150 out).
+
+A Grafana screenshot will be added once these apps have sent enough traffic to show trends.
 
 ## Performance
 
@@ -183,7 +186,7 @@ Full runbook for each env, plus Ollama over Tailscale: [docs/DEPLOY.md](docs/DEP
 ## Limitations and roadmap
 
 **Known limitations:**
-- **No real apps yet:** the gateway is live, but only smoke-test traffic has gone through it so far.
+- **Little traffic so far:** one app routes through the gateway; most ledger rows are still smoke tests.
 - **Anthropic sampling:** temperature and top_p are not forwarded. API version 2026-10-21 rejects them.
 - **Tools:** tool calling is passed through only to OpenAI-compatible providers; the Anthropic and Gemini adapters reject tools.
 - **Streaming and cache:** streams are never cached.
@@ -194,7 +197,8 @@ Full runbook for each env, plus Ollama over Tailscale: [docs/DEPLOY.md](docs/DEP
 
 **Roadmap:**
 - [x] Live, with ledger numbers in this README.
-- [ ] Real apps routed through it, with a Grafana screenshot.
+- [x] A real app routed through it (keshav-ai-platform).
+- [ ] Grafana screenshot of real traffic.
 - [x] Per-project monthly budgets: over budget returns 402 (`tollgate keys budget --project X --usd 5`).
 - [ ] Budget alerts before the cap is hit.
 - [ ] SLO: 99.5% availability excluding provider errors, p99 overhead under 10 ms, with burn-rate alerts.
