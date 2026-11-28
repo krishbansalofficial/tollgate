@@ -50,7 +50,21 @@ More detail: [docs/DESIGN.md](docs/DESIGN.md) · [ADRs](docs/adr/README.md).
 
 ## Real traffic
 
-> **TODO:** not yet live. This section will list the apps routed through Tollgate, requests and tokens served, cost saved by the cache, and a Grafana screenshot, once the deployment ([docs/DEPLOY.md](docs/DEPLOY.md)) is carrying real traffic. No numbers are shown until they exist.
+**Live at [tollg.duckdns.org](https://tollg.duckdns.org)** since 2026-11-27: one Azure ARM VM (2 vCPU, 4 GB) running k3s, with Argo CD, a Let's Encrypt certificate and the full observability stack.
+
+So far the only traffic is the deployment's own smoke tests. These are the ledger's numbers on 2026-11-27, read straight from `usage_events`:
+
+| Provider | Requests | Tokens in / out | Cost | p50 upstream latency |
+|---|---|---|---|---|
+| Groq (gpt-oss-20b, 120b) | 8 | 628 / 1,622 | $0.000594 | 487 ms |
+| Anthropic (Haiku 5.5, Sonnet 5.5) | 2 | 36 / 18 | $0.000142 | 786 ms |
+| Gemini (3.5 Flash-Lite) | 1 | 9 / 7 | $0.000020 | 565 ms |
+| Cache hit | 1 | 79 / 199 | $0 (saved $0.000066) | 0 ms |
+| Rejected (404 unknown model, 401 bad key, 502) | 16 | 0 | $0 | |
+
+**Gateway overhead in production: 1.0 ms p50** (total latency minus upstream time, over the 11 routed requests). That is higher than the 0.2 ms benchmark below, most likely because so few requests mostly hit cold connections and a cold auth cache.
+
+Apps routed through Tollgate and a Grafana screenshot will be added here once real apps send traffic.
 
 ## Performance
 
@@ -169,7 +183,7 @@ Full runbook for each env, plus Ollama over Tailscale: [docs/DEPLOY.md](docs/DEP
 ## Limitations and roadmap
 
 **Known limitations:**
-- **Not live yet:** the "Real traffic" section stays empty until real apps route through it.
+- **No real apps yet:** the gateway is live, but only smoke-test traffic has gone through it so far.
 - **Anthropic sampling:** temperature and top_p are not forwarded. API version 2026-10-21 rejects them.
 - **Tools:** tool calling is passed through only to OpenAI-compatible providers; the Anthropic and Gemini adapters reject tools.
 - **Streaming and cache:** streams are never cached.
@@ -179,7 +193,8 @@ Full runbook for each env, plus Ollama over Tailscale: [docs/DEPLOY.md](docs/DEP
 - **Alerting:** alerts show up in Prometheus and Grafana, but there's no Alertmanager, to keep hosting at $0.
 
 **Roadmap:**
-- [ ] Live, with real traffic numbers in this README.
+- [x] Live, with ledger numbers in this README.
+- [ ] Real apps routed through it, with a Grafana screenshot.
 - [ ] Per-project hard budget limits with alerts.
 - [ ] SLO: 99.5% availability excluding provider errors, p99 overhead under 10 ms, with burn-rate alerts.
 - [ ] Remove one Redis round trip per request, by folding reconcile into the next Allow.
