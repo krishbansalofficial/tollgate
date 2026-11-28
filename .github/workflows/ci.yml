@@ -173,10 +173,12 @@ jobs:
         env:
           TAG: ${{ needs.release.outputs.tag }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          GH_TOKEN: ${{ github.token }} # read-only here; used for the host-key lookup
         run: |
           # GitHub's host keys from its HTTPS API, so ssh never trusts on first use.
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          curl -fsS https://api.github.com/meta | jq -r '.ssh_keys[] | "github.com " + .' > ~/.ssh/known_hosts
+          # Authenticated: anonymous API calls from shared runner IPs get 403s.
+          gh api meta --jq '.ssh_keys[] | "github.com " + .' > ~/.ssh/known_hosts
           [[ -s ~/.ssh/known_hosts ]] || { echo "no GitHub host keys"; exit 1; }
           eval "$(ssh-agent -s)" >/dev/null
           ssh-add -q - <<<"$DEPLOY_SSH_KEY"
