@@ -18,8 +18,8 @@ resources:
 # Argo CD's tollgate app tracks, so main never gets bot commits. Don't edit.
 images:
   - name: ghcr.io/krishbansalofficial/tollgate
-    newTag: sha-459b24248a5b
-    digest: sha256:61c77794b91c12f31cbd674ade27c6843fd01ace1ac129e200efe326eaabb595
+    newTag: sha-1da5ffa7a7bd
+    digest: sha256:2bcd2676e4230e486b10e59266a71ace354ce845345e28e9ce7eef99c1c845ea
 
 configMapGenerator:
   - name: tollgate-config
